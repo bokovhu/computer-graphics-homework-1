@@ -18,8 +18,8 @@
 //
 // NYILATKOZAT
 // ---------------------------------------------------------------------------------------------
-// Nev    : 
-// Neptun : 
+// Nev    : Kovacs Botond Janos
+// Neptun : SSEGZO
 // ---------------------------------------------------------------------------------------------
 // ezennel kijelentem, hogy a feladatot magam keszitettem, es ha barmilyen segitseget igenybe vettem vagy
 // mas szellemi termeket felhasznaltam, akkor a forrast es az atvett reszt kommentekben egyertelmuen jeloltem.
@@ -33,59 +33,128 @@
 //=============================================================================================
 #include "framework.h"
 
+const float splineTension = -0.5f;
+const float splineBias = -0.5f;
+const float splineContinuity = 0.2f;
+const int splineSegmentsBetweenControlPoints = 100;
+
+std::vector <vec2> splineControlPoints;
+std::vector <vec2> splineVertices;
+
+unsigned int splineVao;
+unsigned int splineVbo;
+
 // vertex shader in GLSL: It is a Raw string (C++11) since it contains new line characters
 const char * const vertexSource = R"(
-	#version 330				// Shader 3.3
-	precision highp float;		// normal floats, makes no difference on desktop computers
+	#version 330
+	precision highp float;
 
-	uniform mat4 MVP;			// uniform variable, the Model-View-Projection transformation matrix
-	layout(location = 0) in vec2 vp;	// Varying input: vp = vertex position is expected in attrib array 0
+	uniform mat4 MVP;
+	layout(location = 0) in vec2 vp;
 
 	void main() {
-		gl_Position = vec4(vp.x, vp.y, 0, 1) * MVP;		// transform vp from modeling space to normalized device space
+		gl_Position = MVP * vec4(vp.x, vp.y, 0, 1);
 	}
 )";
 
 // fragment shader in GLSL
 const char * const fragmentSource = R"(
-	#version 330			// Shader 3.3
-	precision highp float;	// normal floats, makes no difference on desktop computers
+	#version 330
+	precision highp float;
 	
-	uniform vec3 color;		// uniform variable, the color of the primitive
-	out vec4 outColor;		// computed color of the current pixel
+	out vec4 outColor;
 
 	void main() {
-		outColor = vec4(0, 1, 0, 1);	// computed color is the color of the primitive
+		outColor = vec4(1.0, 0.0, 0.0, 1.0);
 	}
 )";
 
 GPUProgram gpuProgram; // vertex and fragment shaders
 unsigned int vao;	   // virtual world on the GPU
 
-// Initialization, create an OpenGL context
 void onInitialization() {
+	
+	splineControlPoints.push_back (vec2 (-1.0f, -0.8f));
+	splineControlPoints.push_back (vec2 (-0.5f, -0.3f));
+	splineControlPoints.push_back (vec2 (0.0f, -0.7f));
+	splineControlPoints.push_back (vec2 (0.5f, 0.7f));
+	splineControlPoints.push_back (vec2 (1.0f, 0.1f));
+	
+	for (int i = 0; i < splineControlPoints.size () - 1; i++) {
+		
+		auto &v1 = splineControlPoints [i];
+		auto &v2 = splineControlPoints [i + 1];
+		auto &v3 = splineControlPoints [i + 2 == splineControlPoints.size () - 1 ? splineControlPoints.size () - 1 : i + 2];
+		
+		vec2 startingTangent;
+		vec2 endingTangent;
+		
+		startingTangent.x = ( ( (1.0f - splineTension) * (1.0f + splineBias) * (1.0f + splineContinuity) ) / 2.0f ) * (v1.x - v2.x)
+			+ ( ( (1.0f - splineTension) * (1.0f - splineBias) * (1.0f - splineContinuity) ) / 2.0f ) * (v2.x - v1.x);
+		startingTangent.y = ( ( (1.0f - splineTension) * (1.0f + splineBias) * (1.0f + splineContinuity) ) / 2.0f ) * (v1.y - v2.y)
+			+ ( ( (1.0f - splineTension) * (1.0f - splineBias) * (1.0f - splineContinuity) ) / 2.0f ) * (v2.y - v1.y);
+			
+		endingTangent.x = ( ( (1.0f - splineTension) * (1.0f + splineBias) * (1.0f - splineContinuity) ) / 2.0f ) * (v2.x - v1.x)
+			+ ( ( (1.0f - splineTension) * (1.0f - splineBias) * (1.0f + splineContinuity) ) / 2.0f ) * (v3.x - v2.x);
+		endingTangent.y = ( ( (1.0f - splineTension) * (1.0f + splineBias) * (1.0f - splineContinuity) ) / 2.0f ) * (v2.y - v1.y)
+			+ ( ( (1.0f - splineTension) * (1.0f - splineBias) * (1.0f + splineContinuity) ) / 2.0f ) * (v3.y - v2.y);
+		
+		for (int j = 0; j < splineSegmentsBetweenControlPoints; j++) {
+			
+			float t = (float) j / (float) splineSegmentsBetweenControlPoints;
+			
+			vec2 v;
+			v.x = ( v1.x * ( 2.0f * t * t * t - 3.0f * t * t + 1.0f ) ) 
+				+ ( ( t * t * t - 2.0f * t * t + t ) * startingTangent.x ) 
+				+ ( ( -2.0f * t * t * t + 3.0f * t * t ) * v2.x )
+				+ ( (t * t * t - t * t) * endingTangent.x );
+			v.y = ( v1.y * ( 2.0f * t * t * t - 3.0f * t * t + 1.0f ) ) 
+				+ ( ( t * t * t - 2.0f * t * t + t ) * startingTangent.y ) 
+				+ ( ( -2.0f * t * t * t + 3.0f * t * t ) * v2.y )
+				+ ( (t * t * t - t * t) * endingTangent.y );
+			splineVertices.push_back (v);
+			
+		}
+		
+	}
+	
+	float splineVboData [splineVertices.size () * 2];
+	size_t splineDataIndex = 0;
+	for (int i = 0; i < splineVertices.size (); i++) {
+		
+		auto &splineVertex = splineVertices [i];
+		
+		splineVboData [splineDataIndex++] = splineVertex.x;
+		splineVboData [splineDataIndex++] = splineVertex.y;
+		
+	}
+	
 	glViewport(0, 0, windowWidth, windowHeight);
 
-	glGenVertexArrays(1, &vao);	// get 1 vao id
-	glBindVertexArray(vao);		// make it active
+	glGenVertexArrays(1, &splineVao);
+	glBindVertexArray(splineVao);
 
-	unsigned int vbo;		// vertex buffer object
-	glGenBuffers(1, &vbo);	// Generate 1 buffer
-	glBindBuffer(GL_ARRAY_BUFFER, vbo);
-	// Geometry with 24 bytes (6 floats or 3 x 2 coordinates)
-	float vertices[] = { -0.8f, -0.8f, -0.6f, 1.0f, 0.8f, -0.2f };
-	glBufferData(GL_ARRAY_BUFFER, 	// Copy to GPU target
-		sizeof(vertices),  // # bytes
-		vertices,	      	// address
-		GL_STATIC_DRAW);	// we do not change later
+	glGenBuffers(1, &splineVbo);
+	glBindBuffer(GL_ARRAY_BUFFER, splineVbo);
+	
+	glBufferData(
+		GL_ARRAY_BUFFER,
+		sizeof(splineVboData),
+		splineVboData,
+		GL_DYNAMIC_DRAW
+	);
 
-	glEnableVertexAttribArray(0);  // AttribArray 0
-	glVertexAttribPointer(0,       // vbo -> AttribArray 0
-		2, GL_FLOAT, GL_FALSE, // two floats/attrib, not fixed-point
-		0, NULL); 		     // stride, offset: tightly packed
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(
+		0,
+		2, GL_FLOAT, GL_FALSE,
+		0, NULL
+	);
 
-	// create program for the GPU
 	gpuProgram.Create(vertexSource, fragmentSource, "outColor");
+	
+	glLineWidth (1.0f);
+	
 }
 
 // Window has become invalid: Redraw
@@ -93,20 +162,16 @@ void onDisplay() {
 	glClearColor(0, 0, 0, 0);     // background color
 	glClear(GL_COLOR_BUFFER_BIT); // clear frame buffer
 
-	// Set color to (0, 1, 0) = green
-	int location = glGetUniformLocation(gpuProgram.getId(), "color");
-	glUniform3f(location, 0.0f, 1.0f, 0.0f); // 3 floats
-
-	float MVPtransf[4][4] = { 1, 0, 0, 0,    // MVP matrix, 
-		                      0, 1, 0, 0,    // row-major!
+	float MVPtransf[4][4] = { 1, 0, 0, 0,
+		                      0, 1, 0, 0,
 		                      0, 0, 1, 0,
 		                      0, 0, 0, 1 };
 
-	location = glGetUniformLocation(gpuProgram.getId(), "MVP");	// Get the GPU location of uniform variable MVP
-	glUniformMatrix4fv(location, 1, GL_TRUE, &MVPtransf[0][0]);	// Load a 4x4 row-major float matrix to the specified location
+	int location = glGetUniformLocation(gpuProgram.getId(), "MVP");
+	glUniformMatrix4fv(location, 1, GL_TRUE, &MVPtransf[0][0]);
 
-	glBindVertexArray(vao);  // Draw call
-	glDrawArrays(GL_TRIANGLES, 0 /*startIdx*/, 3 /*# Elements*/);
+	glBindVertexArray(splineVao);
+	glDrawArrays(GL_LINE_STRIP, 0, splineVertices.size ());
 
 	glutSwapBuffers(); // exchange buffers for double buffering
 }

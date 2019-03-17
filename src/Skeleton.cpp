@@ -33,27 +33,147 @@
 //=============================================================================================
 #include "framework.h"
 
-const float splineTension = -0.5f;
-const float splineBias = -0.5f;
-const float splineContinuity = 0.2f;
-const int splineSegmentsBetweenControlPoints = 100;
+inline int min (int a, int b) {
+	return a < b ? a : b;
+}
 
-std::vector <vec2> splineControlPoints;
-std::vector <vec2> splineVertices;
+struct Spline {
+	
+	float tension = -0.5f;
+	float bias = -0.5f;
+	float continuity = 0.1f;
+	int segmentsPerControlPoint = 50;
+	unsigned int vao;
+	unsigned int vbo;
+	std::vector <vec2> controlPoints;
+	std::vector <vec2> vertices;
+	
+	void Setup () {
+		
+		glGenVertexArrays(1, &this->vao);
+		glBindVertexArray(this->vao);
 
-unsigned int splineVao;
-unsigned int splineVbo;
+		glGenBuffers(1, &this->vbo);
+		glBindBuffer(GL_ARRAY_BUFFER, this->vbo);
+		
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(
+			0, // attrib location
+			2, // attrib element count, vec2 has 2 elements
+			GL_FLOAT, // attrib element type, elements are of type float
+			GL_FALSE, // please don't normalize OpenGL, thank you very much
+			0, // no stride in the data, only using positions, tightly packed together
+			0 // first element of the buffer is data already
+		);
+		
+		glBindVertexArray (0);
+		glBindBuffer (GL_ARRAY_BUFFER, 0);
+		
+	}
+	
+	void RecalculateVertices () {
+		
+		vertices.clear ();
+		
+		if (controlPoints.size () >= 2) {
+		
+			for (int i = 0; i < controlPoints.size () - 1; i++) {
+				
+				auto &p1 = controlPoints [i];
+				auto &p2 = controlPoints [i + 1];
+				auto &p3 = controlPoints [min (i + 2, controlPoints.size () - 1)];
+				
+				vec2 m1;
+				vec2 m2;
+				
+				m1.x = ( ( (1.0f - tension) * (1.0f + bias) * (1.0f + continuity) ) / 2.0f ) * (p1.x - p2.x)
+					+ ( ( (1.0f - tension) * (1.0f - bias) * (1.0f - continuity) ) / 2.0f ) * (p2.x - p1.x);
+				m1.y = ( ( (1.0f - tension) * (1.0f + bias) * (1.0f + continuity) ) / 2.0f ) * (p1.y - p2.y)
+					+ ( ( (1.0f - tension) * (1.0f - bias) * (1.0f - continuity) ) / 2.0f ) * (p2.y - p1.y);
+					
+				m2.x = ( ( (1.0f - tension) * (1.0f + bias) * (1.0f - continuity) ) / 2.0f ) * (p2.x - p1.x)
+					+ ( ( (1.0f - tension) * (1.0f - bias) * (1.0f + continuity) ) / 2.0f ) * (p3.x - p2.x);
+				m2.y = ( ( (1.0f - tension) * (1.0f + bias) * (1.0f - continuity) ) / 2.0f ) * (p2.y - p1.y)
+					+ ( ( (1.0f - tension) * (1.0f - bias) * (1.0f + continuity) ) / 2.0f ) * (p3.y - p2.y);
+				
+				vertices.push_back (p1);
+				
+				// TODO: Optimize for pixels
+				for (int j = 1; j < segmentsPerControlPoint - 1; j++) {
+					
+					// Linear interpolation
+					float t = (float) j / (float) segmentsPerControlPoint;
+				
+					vec2 v;
+					v.x = ( p1.x * ( 2.0f * t * t * t - 3.0f * t * t + 1.0f ) ) 
+						+ ( ( t * t * t - 2.0f * t * t + t ) * m1.x ) 
+						+ ( ( -2.0f * t * t * t + 3.0f * t * t ) * p2.x )
+						+ ( (t * t * t - t * t) * m1.x );
+					v.y = ( p1.y * ( 2.0f * t * t * t - 3.0f * t * t + 1.0f ) ) 
+						+ ( ( t * t * t - 2.0f * t * t + t ) * m2.y ) 
+						+ ( ( -2.0f * t * t * t + 3.0f * t * t ) * p2.y )
+						+ ( (t * t * t - t * t) * m2.y );
+					vertices.push_back (v);
+					
+				}
+				
+				vertices.push_back (p2);
+				
+			}
+		
+		}
+		
+	}
+	
+	void UploadVertices () {
+		
+		glBindBuffer (GL_ARRAY_BUFFER, this->vbo);
+		glBufferData (GL_ARRAY_BUFFER, sizeof (float) * vertices.size () * 2, &vertices [0], GL_DYNAMIC_DRAW);
+		
+	}
+	
+	void AddControlPoint (vec2 cp) {
+		
+		controlPoints.push_back (cp);
+		this->RecalculateVertices ();
+		this->UploadVertices ();
+		
+	}
+	
+	void Draw () {
+		
+		glBindVertexArray(vao);
+		glDrawArrays(GL_LINE_STRIP, 0, vertices.size ());
+		glBindVertexArray (0);
+		
+	}
+	
+};
+
+struct MonocycleGame {
+	
+	Spline spline;
+	
+	void Draw () {
+		
+		spline.Draw ();
+		
+	}
+	
+};
+
+MonocycleGame game;
 
 // vertex shader in GLSL: It is a Raw string (C++11) since it contains new line characters
 const char * const vertexSource = R"(
 	#version 330
 	precision highp float;
 
-	uniform mat4 MVP;
-	layout(location = 0) in vec2 vp;
+	uniform mat4 u_modelViewProjection;
+	layout(location = 0) in vec2 in_vertexPosition;
 
 	void main() {
-		gl_Position = MVP * vec4(vp.x, vp.y, 0, 1);
+		gl_Position = u_modelViewProjection * vec4(in_vertexPosition.x, in_vertexPosition.y, 0, 1);
 	}
 )";
 
@@ -62,10 +182,10 @@ const char * const fragmentSource = R"(
 	#version 330
 	precision highp float;
 	
-	out vec4 outColor;
+	out vec4 out_finalColor;
 
 	void main() {
-		outColor = vec4(1.0, 0.0, 0.0, 1.0);
+		out_finalColor = vec4(1.0, 0.0, 0.0, 1.0);
 	}
 )";
 
@@ -74,84 +194,11 @@ unsigned int vao;	   // virtual world on the GPU
 
 void onInitialization() {
 	
-	splineControlPoints.push_back (vec2 (-1.0f, -0.8f));
-	splineControlPoints.push_back (vec2 (-0.5f, -0.3f));
-	splineControlPoints.push_back (vec2 (0.0f, -0.7f));
-	splineControlPoints.push_back (vec2 (0.5f, 0.7f));
-	splineControlPoints.push_back (vec2 (1.0f, 0.1f));
-	
-	for (int i = 0; i < splineControlPoints.size () - 1; i++) {
-		
-		auto &v1 = splineControlPoints [i];
-		auto &v2 = splineControlPoints [i + 1];
-		auto &v3 = splineControlPoints [i + 2 == splineControlPoints.size () - 1 ? splineControlPoints.size () - 1 : i + 2];
-		
-		vec2 startingTangent;
-		vec2 endingTangent;
-		
-		startingTangent.x = ( ( (1.0f - splineTension) * (1.0f + splineBias) * (1.0f + splineContinuity) ) / 2.0f ) * (v1.x - v2.x)
-			+ ( ( (1.0f - splineTension) * (1.0f - splineBias) * (1.0f - splineContinuity) ) / 2.0f ) * (v2.x - v1.x);
-		startingTangent.y = ( ( (1.0f - splineTension) * (1.0f + splineBias) * (1.0f + splineContinuity) ) / 2.0f ) * (v1.y - v2.y)
-			+ ( ( (1.0f - splineTension) * (1.0f - splineBias) * (1.0f - splineContinuity) ) / 2.0f ) * (v2.y - v1.y);
-			
-		endingTangent.x = ( ( (1.0f - splineTension) * (1.0f + splineBias) * (1.0f - splineContinuity) ) / 2.0f ) * (v2.x - v1.x)
-			+ ( ( (1.0f - splineTension) * (1.0f - splineBias) * (1.0f + splineContinuity) ) / 2.0f ) * (v3.x - v2.x);
-		endingTangent.y = ( ( (1.0f - splineTension) * (1.0f + splineBias) * (1.0f - splineContinuity) ) / 2.0f ) * (v2.y - v1.y)
-			+ ( ( (1.0f - splineTension) * (1.0f - splineBias) * (1.0f + splineContinuity) ) / 2.0f ) * (v3.y - v2.y);
-		
-		for (int j = 0; j < splineSegmentsBetweenControlPoints; j++) {
-			
-			float t = (float) j / (float) splineSegmentsBetweenControlPoints;
-			
-			vec2 v;
-			v.x = ( v1.x * ( 2.0f * t * t * t - 3.0f * t * t + 1.0f ) ) 
-				+ ( ( t * t * t - 2.0f * t * t + t ) * startingTangent.x ) 
-				+ ( ( -2.0f * t * t * t + 3.0f * t * t ) * v2.x )
-				+ ( (t * t * t - t * t) * endingTangent.x );
-			v.y = ( v1.y * ( 2.0f * t * t * t - 3.0f * t * t + 1.0f ) ) 
-				+ ( ( t * t * t - 2.0f * t * t + t ) * startingTangent.y ) 
-				+ ( ( -2.0f * t * t * t + 3.0f * t * t ) * v2.y )
-				+ ( (t * t * t - t * t) * endingTangent.y );
-			splineVertices.push_back (v);
-			
-		}
-		
-	}
-	
-	float splineVboData [splineVertices.size () * 2];
-	size_t splineDataIndex = 0;
-	for (int i = 0; i < splineVertices.size (); i++) {
-		
-		auto &splineVertex = splineVertices [i];
-		
-		splineVboData [splineDataIndex++] = splineVertex.x;
-		splineVboData [splineDataIndex++] = splineVertex.y;
-		
-	}
+	game.spline.Setup ();
 	
 	glViewport(0, 0, windowWidth, windowHeight);
 
-	glGenVertexArrays(1, &splineVao);
-	glBindVertexArray(splineVao);
-
-	glGenBuffers(1, &splineVbo);
-	glBindBuffer(GL_ARRAY_BUFFER, splineVbo);
-	
-	glBufferData(
-		GL_ARRAY_BUFFER,
-		sizeof(splineVboData),
-		splineVboData,
-		GL_DYNAMIC_DRAW
-	);
-
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(
-		0,
-		2, GL_FLOAT, GL_FALSE,
-		0, NULL
-	);
-
-	gpuProgram.Create(vertexSource, fragmentSource, "outColor");
+	gpuProgram.Create(vertexSource, fragmentSource, "out_finalColor");
 	
 	glLineWidth (1.0f);
 	
@@ -167,11 +214,10 @@ void onDisplay() {
 		                      0, 0, 1, 0,
 		                      0, 0, 0, 1 };
 
-	int location = glGetUniformLocation(gpuProgram.getId(), "MVP");
+	int location = glGetUniformLocation(gpuProgram.getId(), "u_modelViewProjection");
 	glUniformMatrix4fv(location, 1, GL_TRUE, &MVPtransf[0][0]);
 
-	glBindVertexArray(splineVao);
-	glDrawArrays(GL_LINE_STRIP, 0, splineVertices.size ());
+	game.Draw ();
 
 	glutSwapBuffers(); // exchange buffers for double buffering
 }
@@ -206,7 +252,12 @@ void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel co
 	}
 
 	switch (button) {
-	case GLUT_LEFT_BUTTON:   printf("Left button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);   break;
+	case GLUT_LEFT_BUTTON:   
+		printf("Left button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);
+		if (state == GLUT_DOWN) {
+			game.spline.AddControlPoint (vec2 (cX, cY));
+		}
+		break;
 	case GLUT_MIDDLE_BUTTON: printf("Middle button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY); break;
 	case GLUT_RIGHT_BUTTON:  printf("Right button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);  break;
 	}
@@ -214,5 +265,6 @@ void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel co
 
 // Idle event indicating that some time elapsed: do animation here
 void onIdle() {
-	long time = glutGet(GLUT_ELAPSED_TIME); // elapsed time since the start of the program
+	long time = glutGet(GLUT_ELAPSED_TIME);
+	glutPostRedisplay();
 }

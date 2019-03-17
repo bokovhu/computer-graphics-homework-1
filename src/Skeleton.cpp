@@ -164,7 +164,6 @@ struct MonocycleGame {
 
 MonocycleGame game;
 
-// vertex shader in GLSL: It is a Raw string (C++11) since it contains new line characters
 const char * const vertexSource = R"(
 	#version 330
 	precision highp float;
@@ -177,7 +176,6 @@ const char * const vertexSource = R"(
 	}
 )";
 
-// fragment shader in GLSL
 const char * const fragmentSource = R"(
 	#version 330
 	precision highp float;
@@ -189,8 +187,7 @@ const char * const fragmentSource = R"(
 	}
 )";
 
-GPUProgram gpuProgram; // vertex and fragment shaders
-unsigned int vao;	   // virtual world on the GPU
+GPUProgram gpuProgram;
 
 void onInitialization() {
 	
@@ -204,67 +201,71 @@ void onInitialization() {
 	
 }
 
-// Window has become invalid: Redraw
 void onDisplay() {
-	glClearColor(0, 0, 0, 0);     // background color
-	glClear(GL_COLOR_BUFFER_BIT); // clear frame buffer
+	
+	glClearColor(0, 0, 0, 0);
+	glClear(GL_COLOR_BUFFER_BIT);
 
-	float MVPtransf[4][4] = { 1, 0, 0, 0,
-		                      0, 1, 0, 0,
-		                      0, 0, 1, 0,
-		                      0, 0, 0, 1 };
+	float MVPtransf[4][4] = { 
+		1, 0, 0, 0,
+		0, 1, 0, 0,
+		0, 0, 1, 0,
+		0, 0, 0, 1
+	};
 
 	int location = glGetUniformLocation(gpuProgram.getId(), "u_modelViewProjection");
 	glUniformMatrix4fv(location, 1, GL_TRUE, &MVPtransf[0][0]);
 
 	game.Draw ();
 
-	glutSwapBuffers(); // exchange buffers for double buffering
+	glutSwapBuffers();
+	
 }
 
-// Key of ASCII code pressed
 void onKeyboard(unsigned char key, int pX, int pY) {
-	if (key == 'd') glutPostRedisplay();         // if d, invalidate display, i.e. redraw
+	if (key == 'd') glutPostRedisplay();
 }
 
-// Key of ASCII code released
 void onKeyboardUp(unsigned char key, int pX, int pY) {
 }
 
-// Move mouse with key pressed
-void onMouseMotion(int pX, int pY) {	// pX, pY are the pixel coordinates of the cursor in the coordinate system of the operation system
-	// Convert to normalized device space
-	float cX = 2.0f * pX / windowWidth - 1;	// flip y axis
+void onMouseMotion(int pX, int pY) {
+	
+	float cX = 2.0f * pX / windowWidth - 1;
 	float cY = 1.0f - 2.0f * pY / windowHeight;
+	
 	printf("Mouse moved to (%3.2f, %3.2f)\n", cX, cY);
+	
 }
 
 // Mouse click event
-void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel coordinates of the cursor in the coordinate system of the operation system
-	// Convert to normalized device space
-	float cX = 2.0f * pX / windowWidth - 1;	// flip y axis
+void onMouse(int button, int state, int pX, int pY) {
+	
+	float cX = 2.0f * pX / windowWidth - 1;
 	float cY = 1.0f - 2.0f * pY / windowHeight;
 
 	char * buttonStat;
 	switch (state) {
-	case GLUT_DOWN: buttonStat = "pressed"; break;
-	case GLUT_UP:   buttonStat = "released"; break;
+		case GLUT_DOWN: buttonStat = "pressed"; break;
+		case GLUT_UP:   buttonStat = "released"; break;
 	}
 
 	switch (button) {
-	case GLUT_LEFT_BUTTON:   
-		printf("Left button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);
-		if (state == GLUT_DOWN) {
-			game.spline.AddControlPoint (vec2 (cX, cY));
-		}
-		break;
-	case GLUT_MIDDLE_BUTTON: printf("Middle button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY); break;
-	case GLUT_RIGHT_BUTTON:  printf("Right button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);  break;
+		case GLUT_LEFT_BUTTON:   
+			printf("Left button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);
+			if (state == GLUT_DOWN) {
+				game.spline.AddControlPoint (vec2 (cX, cY));
+			}
+			break;
+		case GLUT_MIDDLE_BUTTON: printf("Middle button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY); break;
+		case GLUT_RIGHT_BUTTON:  printf("Right button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);  break;
 	}
 }
 
-// Idle event indicating that some time elapsed: do animation here
 void onIdle() {
+	
 	long time = glutGet(GLUT_ELAPSED_TIME);
+	
 	glutPostRedisplay();
+	
 }

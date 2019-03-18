@@ -37,16 +37,106 @@ inline int min (int a, int b) {
 	return a < b ? a : b;
 }
 
+inline int max (int a, int b) {
+	return a > b ? a : b;
+}
+
+inline vec2 cloneVec2 (vec2& v) {
+	vec2 clone;
+	clone.x = v.x;
+	clone.y = v.y;
+	return clone;
+}
+
+inline void IdentityMatrix (mat4 &matrix) {
+	
+	for (int i = 0; i < 4; i++) {
+		for (int j = 0; j < 4; j++) {
+			matrix.m [i][j] = 0.0f;
+		}
+		matrix.m [i][i] = 1.0f;
+	}
+	
+}
+
+inline void OrthographicProjection (
+	float left, 
+	float right, 
+	float top, 
+	float bottom,
+	float n,
+	float f,
+	mat4 &matrix
+) {
+	
+	IdentityMatrix (matrix);
+	
+	matrix.m [0][0] = 2.0f / (right - left);
+	matrix.m [1][1] = 2.0f / (top - bottom);
+	matrix.m [2][2] = -2.0f / (f - n);
+	matrix.m [3][3] = 1.0f;
+	
+	matrix.m [0][3] = -1.0f * ( (right + left) / (right - left) );
+	matrix.m [1][3] = -1.0f * ( (top + bottom) / (top - bottom) );
+	matrix.m [2][3] = -1.0f * ( (f + n) / (f - n) );
+	
+}
+
+GPUProgram gpuProgram;
+
+class Camera {
+	private:
+		vec2 position;
+		mat4 projection;
+		mat4 view;
+	public:
+	
+		void SetPosition (float x, float y) {
+			position.x = x;
+			position.y = y;
+			RecalculateView ();
+		}
+		
+		void RecalculateView () {
+			IdentityMatrix (this->view);
+			this->view = this->view * TranslateMatrix (vec3 (position.x, position.y, 0.0f));
+		}
+		
+		void RecalculateProjection () {
+			OrthographicProjection (-1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, this->projection);
+		}
+		
+		void SetShaderUniforms (
+			GPUProgram& program, 
+			char* viewUniformName, 
+			char* projectionUniformName
+		) {
+			
+			view.SetUniform (program.getId (), viewUniformName);
+			projection.SetUniform (program.getId (), projectionUniformName);
+			
+		}
+	
+		void Setup () {
+			SetPosition (0.0f, 0.0f);
+			RecalculateProjection ();
+		}
+	
+};
+
 struct Spline {
 	
+	// Source: https://en.wikipedia.org/wiki/Kochanek%E2%80%93Bartels_spline
 	float tension = -0.5f;
-	float bias = -0.5f;
-	float continuity = 0.1f;
+	float bias = 0.0f;
+	float continuity = 0.5f;
+	
 	int segmentsPerControlPoint = 50;
 	unsigned int vao;
 	unsigned int vbo;
 	std::vector <vec2> controlPoints;
 	std::vector <vec2> vertices;
+	vec3 color;
 	
 	void Setup () {
 		
@@ -77,8 +167,13 @@ struct Spline {
 		
 		if (controlPoints.size () >= 2) {
 		
+			std::vector <vec2> splinePoints;
+			
 			for (int i = 0; i < controlPoints.size () - 1; i++) {
 				
+				// Source of algorithm: https://en.wikipedia.org/wiki/Cubic_Hermite_spline
+				
+				auto &p0 = controlPoints [max (i - 1, 0)];
 				auto &p1 = controlPoints [i];
 				auto &p2 = controlPoints [i + 1];
 				auto &p3 = controlPoints [min (i + 2, controlPoints.size () - 1)];
@@ -86,9 +181,11 @@ struct Spline {
 				vec2 m1;
 				vec2 m2;
 				
-				m1.x = ( ( (1.0f - tension) * (1.0f + bias) * (1.0f + continuity) ) / 2.0f ) * (p1.x - p2.x)
+				// Tangents are calculated based on formulas found at https://en.wikipedia.org/wiki/Kochanek%E2%80%93Bartels_spline
+				
+				m1.x = ( ( (1.0f - tension) * (1.0f + bias) * (1.0f + continuity) ) / 2.0f ) * (p1.x - p0.x)
 					+ ( ( (1.0f - tension) * (1.0f - bias) * (1.0f - continuity) ) / 2.0f ) * (p2.x - p1.x);
-				m1.y = ( ( (1.0f - tension) * (1.0f + bias) * (1.0f + continuity) ) / 2.0f ) * (p1.y - p2.y)
+				m1.y = ( ( (1.0f - tension) * (1.0f + bias) * (1.0f + continuity) ) / 2.0f ) * (p1.y - p0.y)
 					+ ( ( (1.0f - tension) * (1.0f - bias) * (1.0f - continuity) ) / 2.0f ) * (p2.y - p1.y);
 					
 				m2.x = ( ( (1.0f - tension) * (1.0f + bias) * (1.0f - continuity) ) / 2.0f ) * (p2.x - p1.x)
@@ -96,10 +193,18 @@ struct Spline {
 				m2.y = ( ( (1.0f - tension) * (1.0f + bias) * (1.0f - continuity) ) / 2.0f ) * (p2.y - p1.y)
 					+ ( ( (1.0f - tension) * (1.0f - bias) * (1.0f + continuity) ) / 2.0f ) * (p3.y - p2.y);
 				
-				vertices.push_back (p1);
+				vec2 prev;
+				
+				if (splinePoints.empty ()) {
+					prev.x = p1.x;
+					prev.y = p1.y;
+				} else {
+					prev.x = splinePoints [splinePoints.size () - 1].x;
+					prev.y = splinePoints [splinePoints.size () - 1].y;
+				}
 				
 				// TODO: Optimize for pixels
-				for (int j = 1; j < segmentsPerControlPoint - 1; j++) {
+				for (int j = 0; j < segmentsPerControlPoint; j++) {
 					
 					// Linear interpolation
 					float t = (float) j / (float) segmentsPerControlPoint;
@@ -113,11 +218,21 @@ struct Spline {
 						+ ( ( t * t * t - 2.0f * t * t + t ) * m2.y ) 
 						+ ( ( -2.0f * t * t * t + 3.0f * t * t ) * p2.y )
 						+ ( (t * t * t - t * t) * m2.y );
-					vertices.push_back (v);
+						
+					splinePoints.push_back (v);
+						
+					vertices.push_back (cloneVec2 (prev));
+					vertices.push_back (cloneVec2 (v));
+					vertices.push_back (vec2 (prev.x, -1.0f));
+					
+					vertices.push_back (cloneVec2 (v));
+					vertices.push_back (vec2 (v.x, -1.0f));
+					vertices.push_back (vec2 (prev.x, -1.0f));
+					
+					prev.x = v.x;
+					prev.y = v.y;
 					
 				}
-				
-				vertices.push_back (p2);
 				
 			}
 		
@@ -142,8 +257,11 @@ struct Spline {
 	
 	void Draw () {
 		
+		int colorUniformLocation = glGetUniformLocation(gpuProgram.getId(), "u_color");
+		glUniform3f (colorUniformLocation, color.x, color.y, color.z);
+		
 		glBindVertexArray(vao);
-		glDrawArrays(GL_LINE_STRIP, 0, vertices.size ());
+		glDrawArrays(GL_TRIANGLES, 0, vertices.size ());
 		glBindVertexArray (0);
 		
 	}
@@ -152,27 +270,33 @@ struct Spline {
 
 struct MonocycleGame {
 	
-	Spline spline;
+	Spline backgroundSpline;
+	Spline levelSpline;
+	Camera camera;
 	
 	void Draw () {
 		
-		spline.Draw ();
+		backgroundSpline.Draw ();
+		levelSpline.Draw ();
 		
 	}
 	
 };
 
 MonocycleGame game;
+mat4 model;
 
 const char * const vertexSource = R"(
 	#version 330
 	precision highp float;
 
-	uniform mat4 u_modelViewProjection;
+	uniform mat4 u_view;
+	uniform mat4 u_projection;
+	uniform mat4 u_model;
 	layout(location = 0) in vec2 in_vertexPosition;
 
 	void main() {
-		gl_Position = u_modelViewProjection * vec4(in_vertexPosition.x, in_vertexPosition.y, 0, 1);
+		gl_Position = u_projection * u_view * u_model * vec4 (in_vertexPosition.x, in_vertexPosition.y, 0.0, 1.0);
 	}
 )";
 
@@ -180,41 +304,48 @@ const char * const fragmentSource = R"(
 	#version 330
 	precision highp float;
 	
+	uniform vec3 u_color;
 	out vec4 out_finalColor;
 
 	void main() {
-		out_finalColor = vec4(1.0, 0.0, 0.0, 1.0);
+		out_finalColor = vec4(u_color, 1.0);
 	}
 )";
 
-GPUProgram gpuProgram;
-
 void onInitialization() {
 	
-	game.spline.Setup ();
+	game.backgroundSpline.Setup ();
+	game.backgroundSpline.color = vec3 (0.4f, 0.4f, 0.4f);
+	game.backgroundSpline.AddControlPoint (vec2 (-1.0f, 0.6f));
+	game.backgroundSpline.AddControlPoint (vec2 (-0.7f, 0.2f));
+	game.backgroundSpline.AddControlPoint (vec2 (-0.1f, -0.4f));
+	game.backgroundSpline.AddControlPoint (vec2 (0.2f, 0.1f));
+	game.backgroundSpline.AddControlPoint (vec2 (0.5f, -0.2f));
+	game.backgroundSpline.AddControlPoint (vec2 (1.0f, 0.6f));
+	game.backgroundSpline.tension = 0.0f;
+	game.backgroundSpline.continuity = 0.0f;
+	game.backgroundSpline.bias = 0.0f;
+	game.backgroundSpline.RecalculateVertices ();
+	game.backgroundSpline.UploadVertices ();
+	game.levelSpline.Setup ();
+	
 	
 	glViewport(0, 0, windowWidth, windowHeight);
 
 	gpuProgram.Create(vertexSource, fragmentSource, "out_finalColor");
 	
-	glLineWidth (1.0f);
+	game.camera.Setup ();
+	IdentityMatrix (model);
 	
 }
 
 void onDisplay() {
 	
-	glClearColor(0, 0, 0, 0);
+	glClearColor(0, 0.08f, 0.82f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 
-	float MVPtransf[4][4] = { 
-		1, 0, 0, 0,
-		0, 1, 0, 0,
-		0, 0, 1, 0,
-		0, 0, 0, 1
-	};
-
-	int location = glGetUniformLocation(gpuProgram.getId(), "u_modelViewProjection");
-	glUniformMatrix4fv(location, 1, GL_TRUE, &MVPtransf[0][0]);
+	game.camera.SetShaderUniforms (gpuProgram, "u_view", "u_projection");
+	model.SetUniform (gpuProgram.getId (), "u_model");
 
 	game.Draw ();
 
@@ -224,6 +355,36 @@ void onDisplay() {
 
 void onKeyboard(unsigned char key, int pX, int pY) {
 	if (key == 'd') glutPostRedisplay();
+	
+	if (key == 'z') {
+		game.backgroundSpline.tension += 0.05f;
+	}
+	
+	if (key == 'h') {
+		game.backgroundSpline.tension -= 0.05f;
+	}
+	
+	if (key == 'u') {
+		game.backgroundSpline.bias += 0.05f;
+	}
+	
+	if (key == 'j') {
+		game.backgroundSpline.bias -= 0.05f;
+	}
+	
+	if (key == 'i') {
+		game.backgroundSpline.continuity += 0.05f;
+	}
+	
+	if (key == 'k') {
+		game.backgroundSpline.continuity -= 0.05f;
+	}
+	
+	game.backgroundSpline.RecalculateVertices ();
+	game.backgroundSpline.UploadVertices ();
+	glutPostRedisplay();
+	printf ("tension: %3.2f, bias: %3.2f, continuity: %3.2f\n", game.backgroundSpline.tension, game.backgroundSpline.bias, game.backgroundSpline.continuity);
+	
 }
 
 void onKeyboardUp(unsigned char key, int pX, int pY) {
@@ -254,7 +415,7 @@ void onMouse(int button, int state, int pX, int pY) {
 		case GLUT_LEFT_BUTTON:   
 			printf("Left button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);
 			if (state == GLUT_DOWN) {
-				game.spline.AddControlPoint (vec2 (cX, cY));
+				game.levelSpline.AddControlPoint (vec2 (cX, cY));
 			}
 			break;
 		case GLUT_MIDDLE_BUTTON: printf("Middle button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY); break;

@@ -84,6 +84,11 @@ inline void OrthographicProjection (
 
 GPUProgram gpuProgram;
 
+inline void SetUniformMatrix (GPUProgram& program, char* name, mat4 &matrix) {
+	int location = glGetUniformLocation(program.getId (), name);
+	if (location >= 0) glUniformMatrix4fv(location, 1, GL_FALSE, &matrix.m[0][0]);	
+}
+
 class Camera {
 	private:
 		vec2 position;
@@ -97,9 +102,12 @@ class Camera {
 			RecalculateView ();
 		}
 		
+		float GetX () { return position.x; }
+		float GetY () { return position.y; }
+		
 		void RecalculateView () {
 			IdentityMatrix (this->view);
-			this->view = this->view * TranslateMatrix (vec3 (position.x, position.y, 0.0f));
+			this->view = this->view * TranslateMatrix (vec3 (-position.x, -position.y, 0.0f));
 		}
 		
 		void RecalculateProjection () {
@@ -112,8 +120,8 @@ class Camera {
 			char* projectionUniformName
 		) {
 			
-			view.SetUniform (program.getId (), viewUniformName);
-			projection.SetUniform (program.getId (), projectionUniformName);
+			SetUniformMatrix (program, viewUniformName, this->view);
+			SetUniformMatrix (program, projectionUniformName, this->projection);
 			
 		}
 	
@@ -378,6 +386,22 @@ void onKeyboard(unsigned char key, int pX, int pY) {
 	
 	if (key == 'k') {
 		game.backgroundSpline.continuity -= 0.05f;
+	}
+	
+	if (key == 'w') {
+		game.camera.SetPosition (game.camera.GetX(), game.camera.GetY () + 0.05f);
+	}
+	
+	if (key == 's') {
+		game.camera.SetPosition (game.camera.GetX(), game.camera.GetY () - 0.05f);
+	}
+	
+	if (key == 'd') {
+		game.camera.SetPosition (game.camera.GetX() + 0.05f, game.camera.GetY ());
+	}
+	
+	if (key == 'a') {
+		game.camera.SetPosition (game.camera.GetX() - 0.05f, game.camera.GetY ());
 	}
 	
 	game.backgroundSpline.RecalculateVertices ();

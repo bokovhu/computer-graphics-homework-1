@@ -82,6 +82,11 @@ inline void OrthographicProjection (
 	
 }
 
+inline float unzero (float a) {
+	if (a == 0.0f) return 0.001f;
+	return a;
+}
+
 GPUProgram gpuProgram;
 
 inline void SetUniformMatrix (GPUProgram& program, char* name, mat4 &matrix) {
@@ -169,81 +174,129 @@ struct Spline {
 		
 	}
 	
+	float GetHeight (float x) {
+		
+		if (controlPoints.size () == 0) return 0.0f;
+		
+		vec2 p0 (controlPoints [0].x, controlPoints [0].y);
+		vec2 p1 (controlPoints [0].x, controlPoints [0].y);
+		vec2 p2 (controlPoints [0].x, controlPoints [0].y);
+		vec2 p3 (controlPoints [0].x, controlPoints [0].y);
+		bool foundControlPoints = false;
+		
+		for (int i = 0; i < controlPoints.size (); i++) {
+			
+			vec2 cp (controlPoints [i].x, controlPoints [i].y);
+			if (cp.x < x) continue;
+			
+			if (i == 0) {
+				
+				p0.x = controlPoints [0].x;
+				p0.y = controlPoints [0].y;
+				
+				p1.x = controlPoints [0].x;
+				p1.y = controlPoints [0].y;
+				
+				p2.x = controlPoints [0].x;
+				p2.y = controlPoints [0].y;
+				
+				p3.x = controlPoints [min (1, controlPoints.size ())].x;
+				p3.y = controlPoints [min (1, controlPoints.size ())].y;
+				
+				foundControlPoints = true;
+				break;
+				
+			} else if (i == 1) {
+				
+				p0.x = controlPoints [0].x;
+				p0.y = controlPoints [0].y;
+				
+				p1.x = controlPoints [0].x;
+				p1.y = controlPoints [0].y;
+				
+				p2.x = controlPoints [min (1, controlPoints.size ())].x;
+				p2.y = controlPoints [min (1, controlPoints.size ())].y;
+				
+				p3.x = controlPoints [min (2, controlPoints.size ())].x;
+				p3.y = controlPoints [min (2, controlPoints.size ())].y;
+				
+				foundControlPoints = true;
+				break;
+				
+			} else {
+				
+				p0.x = controlPoints [i - 2].x;
+				p0.y = controlPoints [i - 2].y;
+				
+				p1.x = controlPoints [i - 1].x;
+				p1.y = controlPoints [i - 1].y;
+				
+				if (i == controlPoints.size () - 1) {
+					
+					p2.x = controlPoints [i].x;
+					p2.y = controlPoints [i].y;
+					
+					p3.x = controlPoints [i].x;
+					p3.y = controlPoints [i].y;
+					
+				} else {
+					
+					p2.x = controlPoints [i].x;
+					p2.y = controlPoints [i].y;
+					
+					p3.x = controlPoints [i + 1].x;
+					p3.y = controlPoints [i + 1].y;
+					
+				}
+				
+				foundControlPoints = true;
+				break;
+				
+			}
+			
+		}
+		
+		if (!foundControlPoints) {
+			return controlPoints [controlPoints.size () - 1].y;
+		}
+		
+		// Calculate Kochanek-Bartels tangents
+		float d0 = ( (1.0f - tension) * (1.0f + bias) * (1.0f + continuity) ) / 2.0f * unzero ( p1.y - p0.y )
+			+ ( (1.0f - tension) * (1.0f - bias) * (1.0f - continuity) ) / 2.0f * unzero (p2.y - p1.y);
+		float d1 = ( (1.0f - tension) * (1.0f + bias) * (1.0f - continuity) ) / 2.0f * unzero ( p2.y - p1.y )
+			+ ( (1.0f - tension) * (1.0f - bias) * (1.0f + continuity) ) / 2.0f * unzero ( p3.y - p2.y );
+			
+		// Alpha is the interpolation value between p1 and p2
+		float t = (x - p1.x) / abs (p2.x - p1.x);
+		
+		// Calculate the spline interpolation value
+		return (2.0f * t * t * t - 3.0f * t * t + 1.0f) * p1.y
+			+ (t * t * t - 2.0 * t * t + t) * d0 
+			+ (-2.0f * t * t * t + 3.0f * t * t) * p2.y
+			+ (t * t * t - t * t) * d1;
+		
+	}
+	
 	void RecalculateVertices () {
 		
 		vertices.clear ();
 		
 		if (controlPoints.size () >= 2) {
-		
-			std::vector <vec2> splinePoints;
 			
-			for (int i = 0; i < controlPoints.size () - 1; i++) {
+			float fromX = controlPoints [0].x;
+			float toX = controlPoints [controlPoints.size () - 1].x;
+			float step = 2.0f / (float) (windowWidth);
+			
+			float x = fromX;
+			while (x < toX) {
 				
-				// Source of algorithm: https://en.wikipedia.org/wiki/Cubic_Hermite_spline
+				float y = GetHeight (x);
+				vertices.push_back (vec2 (x, -1.0f));
+				vertices.push_back (vec2 (x, y));
 				
-				auto &p0 = controlPoints [max (i - 1, 0)];
-				auto &p1 = controlPoints [i];
-				auto &p2 = controlPoints [i + 1];
-				auto &p3 = controlPoints [min (i + 2, controlPoints.size () - 1)];
-				
-				vec2 m1;
-				vec2 m2;
-				
-				// Tangents are calculated based on formulas found at https://en.wikipedia.org/wiki/Kochanek%E2%80%93Bartels_spline
-				
-				m1.x = ( ( (1.0f - tension) * (1.0f + bias) * (1.0f + continuity) ) / 2.0f ) * (p1.x - p0.x)
-					+ ( ( (1.0f - tension) * (1.0f - bias) * (1.0f - continuity) ) / 2.0f ) * (p2.x - p1.x);
-				m1.y = ( ( (1.0f - tension) * (1.0f + bias) * (1.0f + continuity) ) / 2.0f ) * (p1.y - p0.y)
-					+ ( ( (1.0f - tension) * (1.0f - bias) * (1.0f - continuity) ) / 2.0f ) * (p2.y - p1.y);
-					
-				m2.x = ( ( (1.0f - tension) * (1.0f + bias) * (1.0f - continuity) ) / 2.0f ) * (p2.x - p1.x)
-					+ ( ( (1.0f - tension) * (1.0f - bias) * (1.0f + continuity) ) / 2.0f ) * (p3.x - p2.x);
-				m2.y = ( ( (1.0f - tension) * (1.0f + bias) * (1.0f - continuity) ) / 2.0f ) * (p2.y - p1.y)
-					+ ( ( (1.0f - tension) * (1.0f - bias) * (1.0f + continuity) ) / 2.0f ) * (p3.y - p2.y);
-				
-				vec2 prev;
-				
-				if (splinePoints.empty ()) {
-					prev.x = p1.x;
-					prev.y = p1.y;
-				} else {
-					prev.x = splinePoints [splinePoints.size () - 1].x;
-					prev.y = splinePoints [splinePoints.size () - 1].y;
-				}
-				
-				// TODO: Optimize for pixels
-				for (int j = 0; j < segmentsPerControlPoint; j++) {
-					
-					// Linear interpolation
-					float t = (float) j / (float) segmentsPerControlPoint;
-				
-					vec2 v;
-					v.x = ( p1.x * ( 2.0f * t * t * t - 3.0f * t * t + 1.0f ) ) 
-						+ ( ( t * t * t - 2.0f * t * t + t ) * m1.x ) 
-						+ ( ( -2.0f * t * t * t + 3.0f * t * t ) * p2.x )
-						+ ( (t * t * t - t * t) * m1.x );
-					v.y = ( p1.y * ( 2.0f * t * t * t - 3.0f * t * t + 1.0f ) ) 
-						+ ( ( t * t * t - 2.0f * t * t + t ) * m2.y ) 
-						+ ( ( -2.0f * t * t * t + 3.0f * t * t ) * p2.y )
-						+ ( (t * t * t - t * t) * m2.y );
-						
-					splinePoints.push_back (v);
-						
-					vertices.push_back (cloneVec2 (prev));
-					vertices.push_back (cloneVec2 (v));
-					vertices.push_back (vec2 (prev.x, -1.0f));
-					
-					vertices.push_back (cloneVec2 (v));
-					vertices.push_back (vec2 (v.x, -1.0f));
-					vertices.push_back (vec2 (prev.x, -1.0f));
-					
-					prev.x = v.x;
-					prev.y = v.y;
-					
-				}
-				
+				x += step;
 			}
-		
+			
 		}
 		
 	}
@@ -257,7 +310,22 @@ struct Spline {
 	
 	void AddControlPoint (vec2 cp) {
 		
-		controlPoints.push_back (cp);
+		bool inserted = false;
+		for (auto it = controlPoints.begin (); it != controlPoints.end (); it++) {
+			
+			auto p = *it;
+			if (p.x > cp.x) {
+				controlPoints.insert (it, cp);
+				inserted = true;
+				break;
+			}
+			
+		}
+		
+		if (!inserted) {
+			controlPoints.push_back (cp);
+		}
+		
 		this->RecalculateVertices ();
 		this->UploadVertices ();
 		
@@ -269,7 +337,7 @@ struct Spline {
 		glUniform3f (colorUniformLocation, color.x, color.y, color.z);
 		
 		glBindVertexArray(vao);
-		glDrawArrays(GL_TRIANGLES, 0, vertices.size ());
+		glDrawArrays(GL_LINES, 0, vertices.size ());
 		glBindVertexArray (0);
 		
 	}
@@ -330,9 +398,9 @@ void onInitialization() {
 	game.backgroundSpline.AddControlPoint (vec2 (0.2f, 0.1f));
 	game.backgroundSpline.AddControlPoint (vec2 (0.5f, -0.2f));
 	game.backgroundSpline.AddControlPoint (vec2 (1.0f, 0.6f));
-	game.backgroundSpline.tension = 0.0f;
+	game.backgroundSpline.tension = -0.5f;
 	game.backgroundSpline.continuity = 0.0f;
-	game.backgroundSpline.bias = 0.0f;
+	game.backgroundSpline.bias = 0.5f;
 	game.backgroundSpline.RecalculateVertices ();
 	game.backgroundSpline.UploadVertices ();
 	game.levelSpline.Setup ();

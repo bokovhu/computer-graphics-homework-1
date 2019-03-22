@@ -1,3 +1,9 @@
+// TODO:
+//     * physics implementation
+//     * some initial control points
+//     * circle drawing for monocycle and cyclist
+//     * calculate math for position of legs
+
 //=============================================================================================
 // Mintaprogram: Zöld háromszög. Ervenyes 2018. osztol.
 //
@@ -87,12 +93,12 @@ inline float unzero (float a) {
 	return a;
 }
 
-GPUProgram gpuProgram;
-
 inline void SetUniformMatrix (GPUProgram& program, char* name, mat4 &matrix) {
 	int location = glGetUniformLocation(program.getId (), name);
 	if (location >= 0) glUniformMatrix4fv(location, 1, GL_FALSE, &matrix.m[0][0]);	
 }
+
+const float EPSILON = 0.001f;
 
 class Camera {
 	private:
@@ -137,6 +143,8 @@ class Camera {
 	
 };
 
+GPUProgram gpuProgram;
+
 struct Spline {
 	
 	// Source: https://en.wikipedia.org/wiki/Kochanek%E2%80%93Bartels_spline
@@ -173,7 +181,7 @@ struct Spline {
 		glBindBuffer (GL_ARRAY_BUFFER, 0);
 		
 	}
-	
+
 	float GetHeight (float x) {
 		
 		if (controlPoints.size () == 0) return 0.0f;
@@ -344,16 +352,197 @@ struct Spline {
 	
 };
 
+struct Monocycle {
+
+	vec2 position;
+	vec2 offset;
+	float wheelRotation;
+	mat4 model;
+	unsigned int wheelVao;
+	unsigned int wheelVbo;
+
+	int numWheelSegments = 30;
+
+	float mass = 1.0f;
+	float wheelRadius = 0.08f;
+
+	void Setup () {
+
+		glGenVertexArrays (1, &wheelVao);
+		glBindVertexArray (wheelVao);
+
+		glGenBuffers (1, &wheelVbo);
+		glBindBuffer (GL_ARRAY_BUFFER, wheelVbo);
+
+		float angleStep = (float) M_PI * 2.0f / (numWheelSegments * 1.0f);
+		std::vector <vec2> wheelVertices;
+
+		for (int i = 0; i < numWheelSegments; i++) {
+
+			float angleRadians = i * 1.0f * angleStep;
+
+			wheelVertices.push_back (
+				vec2 (
+					cosf (angleRadians) * wheelRadius,
+					sinf (angleRadians) * wheelRadius
+				)
+			);
+			wheelVertices.push_back (
+				vec2 (
+					cosf (angleRadians + angleStep) * wheelRadius,
+					sinf (angleRadians + angleStep) * wheelRadius
+				)
+			);
+
+		}
+
+		glBufferData (GL_ARRAY_BUFFER, sizeof (float) * wheelVertices.size () * 2, &wheelVertices [0], GL_STATIC_DRAW);
+
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(
+			0, // attrib location
+			2, // attrib element count, vec2 has 2 elements
+			GL_FLOAT, // attrib element type, elements are of type float
+			GL_FALSE, // please don't normalize OpenGL, thank you very much
+			0, // no stride in the data, only using positions, tightly packed together
+			0 // first element of the buffer is data already
+		);
+
+		glBindVertexArray (0);
+		glBindBuffer (GL_ARRAY_BUFFER, 0);
+
+	}
+
+	void CalculateWheelModel () {
+
+		IdentityMatrix (this->model);
+		this->model = this->model * TranslateMatrix (vec3 (position.x + offset.x, position.y + offset.y, 0.0f));
+
+	}
+
+	void Draw (GPUProgram& program) {
+
+		CalculateWheelModel ();
+		SetUniformMatrix (program, "u_model", this->model);
+
+		int colorUniformLocation = glGetUniformLocation(program.getId(), "u_color");
+		glUniform3f (colorUniformLocation, 1.0f, 1.0f, 0.0f);
+
+		glBindVertexArray (wheelVao);
+		glDrawArrays (GL_LINES, 0, numWheelSegments * 2);
+		glBindVertexArray (0);
+
+	}
+
+};
+
 struct MonocycleGame {
 	
 	Spline backgroundSpline;
 	Spline levelSpline;
 	Camera camera;
+	Camera stationaryCamera;
+	bool cameraFollowsMonocycle;
+	
+	Monocycle monocycle;
+
+	float physicsTime = 0.0f;
+	
+	float gravity = 1.0f;
+	float drag = 1.0f;
+	float monocycleForce = 2.0f;
+	
+	float physicsTimeStep = 0.01f;
+	
+	void Setup () {
+		
+		backgroundSpline.Setup ();
+		
+		backgroundSpline.color = vec3 (0.4f, 0.4f, 0.4f);
+		
+		backgroundSpline.AddControlPoint (vec2 (-1.0f, 0.6f));
+		backgroundSpline.AddControlPoint (vec2 (-0.7f, 0.2f));
+		backgroundSpline.AddControlPoint (vec2 (-0.1f, -0.4f));
+		backgroundSpline.AddControlPoint (vec2 (0.2f, 0.1f));
+		backgroundSpline.AddControlPoint (vec2 (0.5f, -0.2f));
+		backgroundSpline.AddControlPoint (vec2 (1.0f, 0.6f));
+		
+		backgroundSpline.tension = 0.5f;
+		backgroundSpline.continuity = 0.0f;
+		backgroundSpline.bias = 0.5f;
+		
+		backgroundSpline.RecalculateVertices ();
+		backgroundSpline.UploadVertices ();
+		
+		levelSpline.Setup ();
+		levelSpline.AddControlPoint (vec2 (-1.0f, 0.0f));
+		levelSpline.AddControlPoint (vec2 (-0.6f, 0.3f));
+		levelSpline.AddControlPoint (vec2 (-0.3f, -0.1f));
+		levelSpline.AddControlPoint (vec2 (0.0f, -0.3f));
+		
+		levelSpline.tension = -0.5f;
+		levelSpline.bias = 0.5f;
+		levelSpline.continuity = 0.0f;
+		
+		levelSpline.RecalculateVertices ();
+		levelSpline.UploadVertices ();
+		
+		camera.Setup ();
+		stationaryCamera.Setup ();
+		
+		monocycle.Setup ();
+		monocycle.position = levelSpline.controlPoints [0];
+		monocycle.position.x += EPSILON;
+
+		cameraFollowsMonocycle = false;
+		
+	}
+	
+	void Update (float delta) {
+		
+		if (cameraFollowsMonocycle) {
+			
+			camera.SetPosition ( monocycle.position.x, camera.GetY () );
+			
+		}
+		
+		physicsTime += delta;
+		
+		while (physicsTime >= physicsTimeStep) {
+			
+			vec2 pathTangent = normalize (
+				vec2 (
+					EPSILON,
+					levelSpline.GetHeight (monocycle.position.x + EPSILON) - levelSpline.GetHeight (monocycle.position.x)
+				)
+			);
+			printf ("pathTangent (%3.2f, %3.2f)\n", pathTangent.x, pathTangent.y);
+			float sinAlpha = pathTangent.y;
+
+			float velocity = ( monocycleForce - (monocycle.mass * gravity * sinAlpha) ) / drag;
+			velocity /= 4.0f;
+			float distanceTraveled = velocity * physicsTimeStep;
+
+			printf ("velocity = %3.2f, distanceTraveled = %3.2f\n", velocity, distanceTraveled);
+
+			monocycle.position = monocycle.position + pathTangent * distanceTraveled;
+			monocycle.wheelRotation += distanceTraveled / (2 * monocycle.wheelRadius * M_PI);
+			monocycle.offset = vec2 ( -pathTangent.y * monocycle.wheelRadius, pathTangent.x * monocycle.wheelRadius );
+			
+			physicsTime -= physicsTimeStep;
+			
+		}
+		
+	}
 	
 	void Draw () {
 		
+		stationaryCamera.SetShaderUniforms (gpuProgram, "u_view", "u_projection");
 		backgroundSpline.Draw ();
+		
+		camera.SetShaderUniforms (gpuProgram, "u_view", "u_projection");
 		levelSpline.Draw ();
+		monocycle.Draw (gpuProgram);
 		
 	}
 	
@@ -361,6 +550,7 @@ struct MonocycleGame {
 
 MonocycleGame game;
 mat4 model;
+long lastFrameTimestamp;
 
 const char * const vertexSource = R"(
 	#version 330
@@ -390,27 +580,12 @@ const char * const fragmentSource = R"(
 
 void onInitialization() {
 	
-	game.backgroundSpline.Setup ();
-	game.backgroundSpline.color = vec3 (0.4f, 0.4f, 0.4f);
-	game.backgroundSpline.AddControlPoint (vec2 (-1.0f, 0.6f));
-	game.backgroundSpline.AddControlPoint (vec2 (-0.7f, 0.2f));
-	game.backgroundSpline.AddControlPoint (vec2 (-0.1f, -0.4f));
-	game.backgroundSpline.AddControlPoint (vec2 (0.2f, 0.1f));
-	game.backgroundSpline.AddControlPoint (vec2 (0.5f, -0.2f));
-	game.backgroundSpline.AddControlPoint (vec2 (1.0f, 0.6f));
-	game.backgroundSpline.tension = -0.5f;
-	game.backgroundSpline.continuity = 0.0f;
-	game.backgroundSpline.bias = 0.5f;
-	game.backgroundSpline.RecalculateVertices ();
-	game.backgroundSpline.UploadVertices ();
-	game.levelSpline.Setup ();
-	
+	game.Setup ();
 	
 	glViewport(0, 0, windowWidth, windowHeight);
 
 	gpuProgram.Create(vertexSource, fragmentSource, "out_finalColor");
 	
-	game.camera.Setup ();
 	IdentityMatrix (model);
 	
 }
@@ -420,7 +595,6 @@ void onDisplay() {
 	glClearColor(0, 0.08f, 0.82f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 
-	game.camera.SetShaderUniforms (gpuProgram, "u_view", "u_projection");
 	model.SetUniform (gpuProgram.getId (), "u_model");
 
 	game.Draw ();
@@ -432,50 +606,11 @@ void onDisplay() {
 void onKeyboard(unsigned char key, int pX, int pY) {
 	if (key == 'd') glutPostRedisplay();
 	
-	if (key == 'z') {
-		game.backgroundSpline.tension += 0.05f;
+	if (key == ' ') {
+		game.cameraFollowsMonocycle = !game.cameraFollowsMonocycle;
 	}
-	
-	if (key == 'h') {
-		game.backgroundSpline.tension -= 0.05f;
-	}
-	
-	if (key == 'u') {
-		game.backgroundSpline.bias += 0.05f;
-	}
-	
-	if (key == 'j') {
-		game.backgroundSpline.bias -= 0.05f;
-	}
-	
-	if (key == 'i') {
-		game.backgroundSpline.continuity += 0.05f;
-	}
-	
-	if (key == 'k') {
-		game.backgroundSpline.continuity -= 0.05f;
-	}
-	
-	if (key == 'w') {
-		game.camera.SetPosition (game.camera.GetX(), game.camera.GetY () + 0.05f);
-	}
-	
-	if (key == 's') {
-		game.camera.SetPosition (game.camera.GetX(), game.camera.GetY () - 0.05f);
-	}
-	
-	if (key == 'd') {
-		game.camera.SetPosition (game.camera.GetX() + 0.05f, game.camera.GetY ());
-	}
-	
-	if (key == 'a') {
-		game.camera.SetPosition (game.camera.GetX() - 0.05f, game.camera.GetY ());
-	}
-	
-	game.backgroundSpline.RecalculateVertices ();
-	game.backgroundSpline.UploadVertices ();
+
 	glutPostRedisplay();
-	printf ("tension: %3.2f, bias: %3.2f, continuity: %3.2f\n", game.backgroundSpline.tension, game.backgroundSpline.bias, game.backgroundSpline.continuity);
 	
 }
 
@@ -494,7 +629,7 @@ void onMouseMotion(int pX, int pY) {
 // Mouse click event
 void onMouse(int button, int state, int pX, int pY) {
 	
-	float cX = 2.0f * pX / windowWidth - 1;
+	float cX = (2.0f * pX / windowWidth - 1) + game.camera.GetX ();
 	float cY = 1.0f - 2.0f * pY / windowHeight;
 
 	char * buttonStat;
@@ -518,6 +653,13 @@ void onMouse(int button, int state, int pX, int pY) {
 void onIdle() {
 	
 	long time = glutGet(GLUT_ELAPSED_TIME);
+	long deltaMs = time - lastFrameTimestamp;
+	lastFrameTimestamp = time;
+	
+	float delta = (float) deltaMs / 1000.0f;
+	if (delta > 1.0f) delta = 0.0f;
+	
+	game.Update (delta);
 	
 	glutPostRedisplay();
 	

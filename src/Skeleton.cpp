@@ -1,6 +1,4 @@
 // TODO:
-//     * physics implementation
-//     * some initial control points
 //     * circle drawing for monocycle and cyclist
 //     * calculate math for position of legs
 
@@ -182,6 +180,126 @@ struct Spline {
 		
 	}
 
+	vec2 GetTangent (float x) {
+
+		if (controlPoints.size () == 0) return 0.0f;
+		
+		vec2 p0 (controlPoints [0].x, controlPoints [0].y);
+		vec2 p1 (controlPoints [0].x, controlPoints [0].y);
+		vec2 p2 (controlPoints [0].x, controlPoints [0].y);
+		vec2 p3 (controlPoints [0].x, controlPoints [0].y);
+		bool foundControlPoints = false;
+		
+		for (int i = 0; i < controlPoints.size (); i++) {
+			
+			vec2 cp (controlPoints [i].x, controlPoints [i].y);
+			if (cp.x < x) continue;
+			
+			if (i == 0) {
+				
+				p0.x = controlPoints [0].x;
+				p0.y = controlPoints [0].y;
+				
+				p1.x = controlPoints [0].x;
+				p1.y = controlPoints [0].y;
+				
+				p2.x = controlPoints [0].x;
+				p2.y = controlPoints [0].y;
+				
+				p3.x = controlPoints [min (1, controlPoints.size ())].x;
+				p3.y = controlPoints [min (1, controlPoints.size ())].y;
+				
+				foundControlPoints = true;
+				break;
+				
+			} else if (i == 1) {
+				
+				p0.x = controlPoints [0].x;
+				p0.y = controlPoints [0].y;
+				
+				p1.x = controlPoints [0].x;
+				p1.y = controlPoints [0].y;
+				
+				p2.x = controlPoints [min (1, controlPoints.size ())].x;
+				p2.y = controlPoints [min (1, controlPoints.size ())].y;
+				
+				p3.x = controlPoints [min (2, controlPoints.size ())].x;
+				p3.y = controlPoints [min (2, controlPoints.size ())].y;
+				
+				foundControlPoints = true;
+				break;
+				
+			} else {
+				
+				p0.x = controlPoints [i - 2].x;
+				p0.y = controlPoints [i - 2].y;
+				
+				p1.x = controlPoints [i - 1].x;
+				p1.y = controlPoints [i - 1].y;
+				
+				if (i == controlPoints.size () - 1) {
+					
+					p2.x = controlPoints [i].x;
+					p2.y = controlPoints [i].y;
+					
+					p3.x = controlPoints [i].x;
+					p3.y = controlPoints [i].y;
+					
+				} else {
+					
+					p2.x = controlPoints [i].x;
+					p2.y = controlPoints [i].y;
+					
+					p3.x = controlPoints [i + 1].x;
+					p3.y = controlPoints [i + 1].y;
+					
+				}
+				
+				foundControlPoints = true;
+				break;
+				
+			}
+			
+		}
+		
+		if (!foundControlPoints) {
+			return controlPoints [controlPoints.size () - 1].y;
+		}
+		
+		// Calculate Kochanek-Bartels tangents
+		vec2 d0;
+
+		d0.x = ( (1.0f - tension) * (1.0f + bias) * (1.0f + continuity) ) / 2.0f * unzero ( p1.x - p0.x )
+			+ ( (1.0f - tension) * (1.0f - bias) * (1.0f - continuity) ) / 2.0f * unzero (p2.x - p1.x);
+
+		d0.y = ( (1.0f - tension) * (1.0f + bias) * (1.0f + continuity) ) / 2.0f * unzero ( p1.y - p0.y )
+			+ ( (1.0f - tension) * (1.0f - bias) * (1.0f - continuity) ) / 2.0f * unzero (p2.y - p1.y);
+
+		vec2 d1;
+
+		d1.x = ( (1.0f - tension) * (1.0f + bias) * (1.0f - continuity) ) / 2.0f * unzero ( p2.x - p1.x )
+			+ ( (1.0f - tension) * (1.0f - bias) * (1.0f + continuity) ) / 2.0f * unzero ( p3.x - p2.x );
+		d1.y = ( (1.0f - tension) * (1.0f + bias) * (1.0f - continuity) ) / 2.0f * unzero ( p2.y - p1.y )
+			+ ( (1.0f - tension) * (1.0f - bias) * (1.0f + continuity) ) / 2.0f * unzero ( p3.y - p2.y );
+			
+		// Alpha is the interpolation value between p1 and p2
+		float t = (x - p1.x) / abs (p2.x - p1.x);
+
+		vec2 result;
+
+		result.x = (6.0f * t * t - 6.0f * t) * p1.x
+			+ (3.0f * t * t - 4.0 * t + 1.0f) * d0.x
+			+ (-6.0f * t * t + 6.0f * t) * p2.x
+			+ (3.0f * t * t - 2.0f * t) * d1.x;
+		result.y = (6.0f * t * t - 6.0f * t) * p1.y
+			+ (3.0f * t * t - 4.0 * t + 1.0f) * d0.y
+			+ (-6.0f * t * t + 6.0f * t) * p2.y
+			+ (3.0f * t * t - 2.0f * t) * d1.y;
+		
+		return result;
+
+	}
+
 	float GetHeight (float x) {
 		
 		if (controlPoints.size () == 0) return 0.0f;
@@ -358,10 +476,14 @@ struct Monocycle {
 	vec2 offset;
 	float wheelRotation;
 	mat4 model;
+
 	unsigned int wheelVao;
 	unsigned int wheelVbo;
-
+	
 	int numWheelSegments = 30;
+	int numWheelCrossLines = 6;
+
+	int numWheelVertices = 0;
 
 	float mass = 1.0f;
 	float wheelRadius = 0.08f;
@@ -396,6 +518,26 @@ struct Monocycle {
 
 		}
 
+		angleStep = (float) M_PI / (numWheelCrossLines * 1.0f);
+		for (int i = 0; i < numWheelCrossLines; i++) {
+
+			float angleRadians = i * 1.0f * angleStep;
+			wheelVertices.push_back (
+				vec2 (
+					cosf (angleRadians) * wheelRadius,
+					sinf (angleRadians) * wheelRadius
+				)
+			);
+			wheelVertices.push_back (
+				vec2 (
+					cosf (angleRadians + (float) M_PI) * wheelRadius,
+					sinf (angleRadians + (float) M_PI) * wheelRadius
+				)
+			);
+
+		}
+
+		numWheelVertices = wheelVertices.size ();
 		glBufferData (GL_ARRAY_BUFFER, sizeof (float) * wheelVertices.size () * 2, &wheelVertices [0], GL_STATIC_DRAW);
 
 		glEnableVertexAttribArray(0);
@@ -413,23 +555,23 @@ struct Monocycle {
 
 	}
 
-	void CalculateWheelModel () {
-
-		IdentityMatrix (this->model);
-		this->model = this->model * TranslateMatrix (vec3 (position.x + offset.x, position.y + offset.y, 0.0f));
-
-	}
-
 	void Draw (GPUProgram& program) {
 
-		CalculateWheelModel ();
+		mat4 rotation;
+		IdentityMatrix (rotation);
+		rotation = rotation * RotationMatrix (wheelRotation, vec3 (0.0f, 0.0f, 1.0f));
+		
+		IdentityMatrix (this->model);
+		this->model = this->model * rotation;
+		this->model = this->model * TranslateMatrix (vec3 (position.x + offset.x, position.y + offset.y, 0.0f));
+
 		SetUniformMatrix (program, "u_model", this->model);
 
 		int colorUniformLocation = glGetUniformLocation(program.getId(), "u_color");
 		glUniform3f (colorUniformLocation, 1.0f, 1.0f, 0.0f);
 
 		glBindVertexArray (wheelVao);
-		glDrawArrays (GL_LINES, 0, numWheelSegments * 2);
+		glDrawArrays (GL_LINES, 0, numWheelVertices);
 		glBindVertexArray (0);
 
 	}
@@ -453,9 +595,9 @@ struct MonocycleGame {
 	float monocycleForce = 2.0f;
 	
 	float physicsTimeStep = 0.01f;
-	
-	void Setup () {
-		
+
+	void SetupBackgroundSpline () {
+
 		backgroundSpline.Setup ();
 		
 		backgroundSpline.color = vec3 (0.4f, 0.4f, 0.4f);
@@ -474,6 +616,10 @@ struct MonocycleGame {
 		backgroundSpline.RecalculateVertices ();
 		backgroundSpline.UploadVertices ();
 		
+	}
+
+	void SetupLevelSpline () {
+
 		levelSpline.Setup ();
 		levelSpline.AddControlPoint (vec2 (-1.0f, 0.0f));
 		levelSpline.AddControlPoint (vec2 (-0.6f, 0.3f));
@@ -487,6 +633,14 @@ struct MonocycleGame {
 		levelSpline.RecalculateVertices ();
 		levelSpline.UploadVertices ();
 		
+	}
+	
+	void Setup () {
+		
+		SetupBackgroundSpline ();
+
+		SetupLevelSpline ();
+
 		camera.Setup ();
 		stationaryCamera.Setup ();
 		
@@ -511,22 +665,17 @@ struct MonocycleGame {
 		while (physicsTime >= physicsTimeStep) {
 			
 			vec2 pathTangent = normalize (
-				vec2 (
-					EPSILON,
-					levelSpline.GetHeight (monocycle.position.x + EPSILON) - levelSpline.GetHeight (monocycle.position.x)
-				)
+				levelSpline.GetTangent (monocycle.position.x)
 			);
-			printf ("pathTangent (%3.2f, %3.2f)\n", pathTangent.x, pathTangent.y);
 			float sinAlpha = pathTangent.y;
 
 			float velocity = ( monocycleForce - (monocycle.mass * gravity * sinAlpha) ) / drag;
 			velocity /= 4.0f;
 			float distanceTraveled = velocity * physicsTimeStep;
 
-			printf ("velocity = %3.2f, distanceTraveled = %3.2f\n", velocity, distanceTraveled);
-
 			monocycle.position = monocycle.position + pathTangent * distanceTraveled;
-			monocycle.wheelRotation += distanceTraveled / (2 * monocycle.wheelRadius * M_PI);
+			monocycle.position.y = levelSpline.GetHeight (monocycle.position.x);
+			monocycle.wheelRotation -= (2.0f * M_PI) * (distanceTraveled / (2 * monocycle.wheelRadius * M_PI));
 			monocycle.offset = vec2 ( -pathTangent.y * monocycle.wheelRadius, pathTangent.x * monocycle.wheelRadius );
 			
 			physicsTime -= physicsTimeStep;

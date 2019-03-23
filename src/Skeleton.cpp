@@ -470,6 +470,42 @@ struct Spline {
 	
 };
 
+struct IntersectCirclesResult {
+
+	bool flag;
+	vec2 r1;
+	vec2 r2;
+
+};
+
+IntersectCirclesResult intersectCircles (
+	vec2 center1, float radius1,
+	vec2 center2, float radius2
+) {
+
+	IntersectCirclesResult result;
+	result.flag = false;
+
+	vec2 diff = center2 - center1;
+	float d = length (diff);
+
+	if (d > radius1 + radius2 || d < radius2 - radius1 || (d == 0.0f && radius1 == radius2)) {
+	} else {
+
+		float cd = ( radius1 * radius1 - radius2 * radius2 + d * d ) / (2 * d);
+		float hcl = sqrtf ( radius1 * radius1 - cd * cd );
+		vec2 cm (center1.x + (cd * diff.x) / d, center1.y + (cd * diff.y) / d);
+
+		result.r1 = vec2 (cm.x + (hcl * diff.y) / d, cm.y - (hcl * diff.x) / d);
+		result.r2 = vec2 (cm.x - (hcl * diff.y) / d, cm.y + (hcl * diff.x) / d);
+		result.flag = true;
+
+	}
+
+	return result;
+
+}
+
 struct Monocycle {
 
 	vec2 position;
@@ -481,14 +517,29 @@ struct Monocycle {
 	unsigned int wheelVbo;
 
 	int numWheelSegments = 30;
-	int numWheelCrossLines = 6;
+	int numWheelCrossLines = 4;
 
 	int numWheelVertices = 0;
 
+	unsigned int headAndBodyVao;
+	unsigned int headAndBodyVbo;
+
+	int numHeadSegments = 15;
+	int numHeadAndBodyVertices = 0;
+
+	unsigned int legsVao;
+	unsigned int legsVbo;
+
+	int numLegVertices = 2 * 2;
+
 	float mass = 10.0f;
 	float wheelRadius = 32.0f;
+	float headRadius = 24.0f;
+	float headDistanceFromWheel = wheelRadius * 3.0f;
+	float bodyDistanceFromWheel = wheelRadius * 1.5f;
+	float pedalCircleRadius = wheelRadius * 0.6f;
 
-	void Setup () {
+	void CreateWheel () {
 
 		glGenVertexArrays (1, &wheelVao);
 		glBindVertexArray (wheelVao);
@@ -555,7 +606,104 @@ struct Monocycle {
 
 	}
 
-	void Draw (GPUProgram& program) {
+	void CreateHeadAndBody () {
+
+		glGenVertexArrays (1, &headAndBodyVao);
+		glBindVertexArray (headAndBodyVao);
+
+		glGenBuffers (1, &headAndBodyVbo);
+		glBindBuffer (GL_ARRAY_BUFFER, headAndBodyVbo);
+
+		float angleStep = (float) M_PI * 2.0f / (numHeadSegments * 1.0f);
+		std::vector <vec2> headVertices;
+
+		for (int i = 0; i < numHeadSegments; i++) {
+
+			float angleRadians = i * 1.0f * angleStep;
+
+			headVertices.push_back (
+				vec2 (
+					cosf (angleRadians) * headRadius,
+					sinf (angleRadians) * headRadius + headDistanceFromWheel
+				)
+			);
+			headVertices.push_back (
+				vec2 (
+					cosf (angleRadians + angleStep) * headRadius,
+					sinf (angleRadians + angleStep) * headRadius + headDistanceFromWheel
+				)
+			);
+
+		}
+
+		headVertices.push_back (
+			vec2 (
+				0.0f,
+				headDistanceFromWheel - headRadius
+			)
+		);
+		headVertices.push_back (
+			vec2 (
+				0.0f,
+				bodyDistanceFromWheel
+			)
+		);
+
+		numHeadAndBodyVertices = headVertices.size ();
+		glBufferData (GL_ARRAY_BUFFER, sizeof (float) * headVertices.size () * 2, &headVertices [0], GL_STATIC_DRAW);
+
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(
+			0, // attrib location
+			2, // attrib element count, vec2 has 2 elements
+			GL_FLOAT, // attrib element type, elements are of type float
+			GL_FALSE, // please don't normalize OpenGL, thank you very much
+			0, // no stride in the data, only using positions, tightly packed together
+			0 // first element of the buffer is data already
+		);
+
+		glBindVertexArray (0);
+		glBindBuffer (GL_ARRAY_BUFFER, 0);
+
+	}
+
+	void SetupLegs () {
+
+		glGenVertexArrays (1, &legsVao);
+		glBindVertexArray (legsVao);
+
+		glGenBuffers (1, &legsVbo);
+		glBindBuffer (GL_ARRAY_BUFFER, legsVbo);
+
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(
+			0, // attrib location
+			2, // attrib element count, vec2 has 2 elements
+			GL_FLOAT, // attrib element type, elements are of type float
+			GL_FALSE, // please don't normalize OpenGL, thank you very much
+			0, // no stride in the data, only using positions, tightly packed together
+			0 // first element of the buffer is data already
+		);
+
+		glBindVertexArray (0);
+		glBindBuffer (GL_ARRAY_BUFFER, 0);
+
+	}
+
+	void Setup () {
+
+		// Create the wheel
+		CreateWheel ();
+
+		// Create head and body
+		CreateHeadAndBody ();
+
+		// Set-up legs
+		SetupLegs ();
+
+	}
+
+	void DrawWheel (GPUProgram& program) {
 
 		mat4 rotation;
 		IdentityMatrix (rotation);
@@ -567,12 +715,84 @@ struct Monocycle {
 
 		SetUniformMatrix (program, "u_model", this->model);
 
-		int colorUniformLocation = glGetUniformLocation(program.getId(), "u_color");
-		glUniform3f (colorUniformLocation, 1.0f, 1.0f, 0.0f);
-
 		glBindVertexArray (wheelVao);
 		glDrawArrays (GL_LINES, 0, numWheelVertices);
 		glBindVertexArray (0);
+
+	}
+
+	void DrawHeadAndBody (GPUProgram& program) {
+
+		// Other parts don't require rotation
+		IdentityMatrix (this->model);
+		this->model = this->model * TranslateMatrix (vec3 (position.x + offset.x, position.y + offset.y, 0.0f));
+
+		SetUniformMatrix (program, "u_model", this->model);
+
+		glBindVertexArray (headAndBodyVao);
+		glDrawArrays (GL_LINES, 0, numHeadAndBodyVertices);
+		glBindVertexArray (0);
+
+	}
+
+	void DrawLegs (GPUProgram& program) {
+
+		std::vector <vec2> legVertices;
+
+		float legLength = abs (bodyDistanceFromWheel + pedalCircleRadius) / 2.0f;
+
+		// Leg #1
+		float leg1Angle = wheelRotation;
+		vec2 leg1CirclePosition (cosf (leg1Angle) * pedalCircleRadius, sinf (leg1Angle) * pedalCircleRadius);
+		vec2 leg1ToBody (leg1CirclePosition.x, leg1CirclePosition.y - bodyDistanceFromWheel);
+		float halfLeg1ToBodyLength = length (leg1ToBody) / 2.0f;
+		float d = sqrtf (legLength * legLength - halfLeg1ToBodyLength * halfLeg1ToBodyLength);
+
+		IntersectCirclesResult icr = intersectCircles (
+			vec2 (0.0f, bodyDistanceFromWheel), legLength,
+			vec2 (leg1CirclePosition.x / 2.0f, (bodyDistanceFromWheel + leg1CirclePosition.y) / 2.0f), d
+		);
+		legVertices.push_back (vec2 (0.0f, bodyDistanceFromWheel));
+		legVertices.push_back (vec2 (icr.r2.x, icr.r2.y));
+		legVertices.push_back (leg1CirclePosition);
+		legVertices.push_back (vec2 (icr.r2.x, icr.r2.y));
+
+
+		// Leg #2
+		float leg2Angle = wheelRotation + (float) M_PI;
+		vec2 leg2CirclePosition (cosf (leg2Angle) * pedalCircleRadius, sinf (leg2Angle) * pedalCircleRadius);
+		vec2 leg2ToBody (leg2CirclePosition.x, leg2CirclePosition.y - bodyDistanceFromWheel);
+		float halfLeg2ToBodyLength = length (leg2ToBody) / 2.0f;
+		d = sqrtf (legLength * legLength - halfLeg2ToBodyLength * halfLeg2ToBodyLength);
+
+		icr = intersectCircles (
+			vec2 (0.0f, bodyDistanceFromWheel), legLength,
+			vec2 (leg2CirclePosition.x / 2.0f, (bodyDistanceFromWheel + leg2CirclePosition.y) / 2.0f), d
+		);
+		legVertices.push_back (vec2 (0.0f, bodyDistanceFromWheel));
+		legVertices.push_back (vec2 (icr.r2.x, icr.r2.y));
+		legVertices.push_back (leg2CirclePosition);
+		legVertices.push_back (vec2 (icr.r2.x, icr.r2.y));
+
+		numLegVertices = legVertices.size ();
+		glBindBuffer (GL_ARRAY_BUFFER, legsVbo);
+		glBufferData (GL_ARRAY_BUFFER, sizeof (float) * legVertices.size () * 2, &legVertices [0], GL_DYNAMIC_DRAW);
+		glBindBuffer (GL_ARRAY_BUFFER, 0);
+
+		glBindVertexArray (legsVao);
+		glDrawArrays (GL_LINES, 0, numLegVertices);
+		glBindVertexArray (0);
+
+	}
+
+	void Draw (GPUProgram& program) {
+
+		int colorUniformLocation = glGetUniformLocation(program.getId(), "u_color");
+		glUniform3f (colorUniformLocation, 1.0f, 1.0f, 0.0f);
+
+		DrawWheel (program);
+		DrawHeadAndBody (program);
+		DrawLegs (program);
 
 	}
 

@@ -96,7 +96,7 @@ inline void SetUniformMatrix (GPUProgram& program, char* name, mat4 &matrix) {
 	if (location >= 0) glUniformMatrix4fv(location, 1, GL_FALSE, &matrix.m[0][0]);	
 }
 
-const float EPSILON = 0.001f;
+const float EPSILON = 0.1f;
 
 class Camera {
 	private:
@@ -120,7 +120,7 @@ class Camera {
 		}
 		
 		void RecalculateProjection () {
-			OrthographicProjection (-1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, this->projection);
+			OrthographicProjection (0, windowWidth * 1.0f, windowHeight * 1.0f, 0, 0.0f, 1000.0f, this->projection);
 		}
 		
 		void SetShaderUniforms (
@@ -135,7 +135,7 @@ class Camera {
 		}
 	
 		void Setup () {
-			SetPosition (0.0f, 0.0f);
+			SetPosition (windowWidth / 2.0f, windowHeight / 2.0f);
 			RecalculateProjection ();
 		}
 	
@@ -283,7 +283,7 @@ struct Spline {
 			+ ( (1.0f - tension) * (1.0f - bias) * (1.0f + continuity) ) / 2.0f * unzero ( p3.y - p2.y );
 			
 		// Alpha is the interpolation value between p1 and p2
-		float t = (x - p1.x) / abs (p2.x - p1.x);
+		float t = (x - p1.x) / unzero (abs (p2.x - p1.x));
 
 		vec2 result;
 
@@ -393,7 +393,7 @@ struct Spline {
 			+ ( (1.0f - tension) * (1.0f - bias) * (1.0f + continuity) ) / 2.0f * unzero ( p3.y - p2.y );
 			
 		// Alpha is the interpolation value between p1 and p2
-		float t = (x - p1.x) / abs (p2.x - p1.x);
+		float t = (x - p1.x) / unzero (abs (p2.x - p1.x));
 		
 		// Calculate the spline interpolation value
 		return (2.0f * t * t * t - 3.0f * t * t + 1.0f) * p1.y
@@ -411,15 +411,15 @@ struct Spline {
 			
 			float fromX = controlPoints [0].x;
 			float toX = controlPoints [controlPoints.size () - 1].x;
-			float step = 2.0f / (float) (windowWidth);
+			float step = 1.0f;
 			
 			float x = fromX;
 			while (x < toX) {
-				
+
 				float y = GetHeight (x);
-				vertices.push_back (vec2 (x, -1.0f));
+				vertices.push_back (vec2 (x, 0.0f));
 				vertices.push_back (vec2 (x, y));
-				
+
 				x += step;
 			}
 			
@@ -479,14 +479,14 @@ struct Monocycle {
 
 	unsigned int wheelVao;
 	unsigned int wheelVbo;
-	
+
 	int numWheelSegments = 30;
 	int numWheelCrossLines = 6;
 
 	int numWheelVertices = 0;
 
-	float mass = 1.0f;
-	float wheelRadius = 0.08f;
+	float mass = 10.0f;
+	float wheelRadius = 32.0f;
 
 	void Setup () {
 
@@ -590,9 +590,9 @@ struct MonocycleGame {
 
 	float physicsTime = 0.0f;
 	
-	float gravity = 1.0f;
-	float drag = 1.0f;
-	float monocycleForce = 2.0f;
+	float gravity = 10.0f;
+	float drag = 1.5f;
+	float monocycleForce = 350.0f;
 	
 	float physicsTimeStep = 0.01f;
 
@@ -602,12 +602,12 @@ struct MonocycleGame {
 		
 		backgroundSpline.color = vec3 (0.4f, 0.4f, 0.4f);
 		
-		backgroundSpline.AddControlPoint (vec2 (-1.0f, 0.6f));
-		backgroundSpline.AddControlPoint (vec2 (-0.7f, 0.2f));
-		backgroundSpline.AddControlPoint (vec2 (-0.1f, -0.4f));
-		backgroundSpline.AddControlPoint (vec2 (0.2f, 0.1f));
-		backgroundSpline.AddControlPoint (vec2 (0.5f, -0.2f));
-		backgroundSpline.AddControlPoint (vec2 (1.0f, 0.6f));
+		backgroundSpline.AddControlPoint (vec2 (EPSILON, windowHeight * 0.9f));
+		backgroundSpline.AddControlPoint (vec2 (windowWidth * 0.2f, windowHeight * 0.6f));
+		backgroundSpline.AddControlPoint (vec2 (windowWidth * 0.4f, windowHeight * 0.3f));
+		backgroundSpline.AddControlPoint (vec2 (windowWidth * 0.6f, windowHeight * 0.5f));
+		backgroundSpline.AddControlPoint (vec2 (windowWidth * 0.8f, windowHeight * 0.3f));
+		backgroundSpline.AddControlPoint (vec2 (windowWidth * 1.0f, windowHeight * 0.7f));
 		
 		backgroundSpline.tension = 0.5f;
 		backgroundSpline.continuity = 0.0f;
@@ -621,10 +621,10 @@ struct MonocycleGame {
 	void SetupLevelSpline () {
 
 		levelSpline.Setup ();
-		levelSpline.AddControlPoint (vec2 (-1.0f, 0.0f));
-		levelSpline.AddControlPoint (vec2 (-0.6f, 0.3f));
-		levelSpline.AddControlPoint (vec2 (-0.3f, -0.1f));
-		levelSpline.AddControlPoint (vec2 (0.0f, -0.3f));
+		levelSpline.AddControlPoint (vec2 (EPSILON, windowHeight * 0.5f));
+		levelSpline.AddControlPoint (vec2 (windowWidth * 0.15f, windowHeight * 0.7f));
+		levelSpline.AddControlPoint (vec2 (windowWidth * 0.3f, windowHeight * 0.55f));
+		levelSpline.AddControlPoint (vec2 (windowWidth * 0.5f, windowHeight * 0.3f));
 		
 		levelSpline.tension = -0.5f;
 		levelSpline.bias = 0.5f;
@@ -670,7 +670,6 @@ struct MonocycleGame {
 			float sinAlpha = pathTangent.y;
 
 			float velocity = ( monocycleForce - (monocycle.mass * gravity * sinAlpha) ) / drag;
-			velocity /= 4.0f;
 			float distanceTraveled = velocity * physicsTimeStep;
 
 			monocycle.position = monocycle.position + pathTangent * distanceTraveled;
@@ -711,7 +710,7 @@ const char * const vertexSource = R"(
 	layout(location = 0) in vec2 in_vertexPosition;
 
 	void main() {
-		gl_Position = u_projection * u_view * u_model * vec4 (in_vertexPosition.x, in_vertexPosition.y, 0.0, 1.0);
+		gl_Position = vec4 ((u_projection * u_view * u_model * vec4 (in_vertexPosition.x, in_vertexPosition.y, 0.0, 1.0)).xyz, 1.0);
 	}
 )";
 
@@ -778,8 +777,8 @@ void onMouseMotion(int pX, int pY) {
 // Mouse click event
 void onMouse(int button, int state, int pX, int pY) {
 	
-	float cX = (2.0f * pX / windowWidth - 1) + game.camera.GetX ();
-	float cY = 1.0f - 2.0f * pY / windowHeight;
+	float cX = pX * 1.0f + (game.camera.GetX () - windowWidth / 2.0f);
+	float cY = windowHeight - pY * 1.0f;
 
 	char * buttonStat;
 	switch (state) {

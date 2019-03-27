@@ -3,7 +3,7 @@
 //     * calculate math for position of legs
 
 //=============================================================================================
-// Mintaprogram: Zöld háromszög. Ervenyes 2018. osztol.
+// Mintaprogram: ZÃ¶ld hÃ¡romszÃ¶g. Ervenyes 2018. osztol.
 //
 // A beadott program csak ebben a fajlban lehet, a fajl 1 byte-os ASCII karaktereket tartalmazhat, BOM kihuzando.
 // Tilos:
@@ -96,7 +96,7 @@ inline void SetUniformMatrix (GPUProgram& program, char* name, mat4 &matrix) {
 	if (location >= 0) glUniformMatrix4fv(location, 1, GL_FALSE, &matrix.m[0][0]);	
 }
 
-const float EPSILON = 0.1f;
+const float EPSILON = 0.01f;
 
 class Camera {
 	private:
@@ -180,7 +180,7 @@ struct Spline {
 		
 	}
 
-	vec2 GetTangent (float x) {
+	float GetTangent (float x) {
 
 		if (controlPoints.size () == 0) return 0.0f;
 		
@@ -285,18 +285,19 @@ struct Spline {
 		// Alpha is the interpolation value between p1 and p2
 		float t = (x - p1.x) / unzero (abs (p2.x - p1.x));
 
-		vec2 result;
+		vec2 tangentVector;
 
-		result.x = (6.0f * t * t - 6.0f * t) * p1.x
+		tangentVector.x = (6.0f * t * t - 6.0f * t) * p1.x
 			+ (3.0f * t * t - 4.0 * t + 1.0f) * d0.x
 			+ (-6.0f * t * t + 6.0f * t) * p2.x
 			+ (3.0f * t * t - 2.0f * t) * d1.x;
-		result.y = (6.0f * t * t - 6.0f * t) * p1.y
+
+		tangentVector.y = (6.0f * t * t - 6.0f * t) * p1.y
 			+ (3.0f * t * t - 4.0 * t + 1.0f) * d0.y
 			+ (-6.0f * t * t + 6.0f * t) * p2.y
 			+ (3.0f * t * t - 2.0f * t) * d1.y;
-		
-		return result;
+
+		return tangentVector.y / unzero (tangentVector.x);
 
 	}
 
@@ -530,9 +531,9 @@ struct Monocycle {
 	unsigned int legsVao;
 	unsigned int legsVbo;
 
-	int numLegVertices = 2 * 2;
+	int numLegVertices = 0;
 
-	float mass = 10.0f;
+	float mass = 1.0f;
 	float wheelRadius = 32.0f;
 	float headRadius = 24.0f;
 	float headDistanceFromWheel = wheelRadius * 3.0f;
@@ -798,6 +799,8 @@ struct Monocycle {
 
 };
 
+mat4 model;
+
 struct MonocycleGame {
 	
 	Spline backgroundSpline;
@@ -815,6 +818,10 @@ struct MonocycleGame {
 	float monocycleForce = 350.0f;
 	
 	float physicsTimeStep = 0.01f;
+
+	unsigned int debugLinesVao;
+	unsigned int debugLinesVbo;
+	std::vector <vec2> debugLinesVertices;
 
 	void SetupBackgroundSpline () {
 
@@ -869,6 +876,8 @@ struct MonocycleGame {
 		monocycle.position.x += EPSILON;
 
 		cameraFollowsMonocycle = false;
+
+		SetupDebugLines ();
 		
 	}
 	
@@ -884,23 +893,67 @@ struct MonocycleGame {
 		
 		while (physicsTime >= physicsTimeStep) {
 			
-			vec2 pathTangent = normalize (
-				levelSpline.GetTangent (monocycle.position.x)
-			);
-			float sinAlpha = pathTangent.y;
+			float pathTangent = levelSpline.GetTangent (monocycle.position.x);
+			if (pathTangent < -500.0f) pathTangent = -500.0f;
+			if (pathTangent > 500.0f) pathTangent = 500.0f;
+
+			float dr = abs (sqrtf (1.0f + pathTangent * pathTangent));
+
+			float sinAlpha = sinf (atanf (pathTangent));
+			float cosAlpha = cosf (atanf (pathTangent));
+
+			debugLinesVertices.push_back (vec2 (monocycle.position.x - 20.0f * cosAlpha, monocycle.position.y - 20.0f * sinAlpha));
+			debugLinesVertices.push_back (vec2 (monocycle.position.x + 20.0f * cosAlpha, monocycle.position.y + 20.0f * sinAlpha));
+
+			vec2 normal;
+			normal.x = -sinf (atanf (pathTangent));
+			normal.y = cosf (atanf (pathTangent));
 
 			float velocity = ( monocycleForce - (monocycle.mass * gravity * sinAlpha) ) / drag;
 			float distanceTraveled = velocity * physicsTimeStep;
 
-			monocycle.position = monocycle.position + pathTangent * distanceTraveled;
+			float dx = distanceTraveled / dr;
+
+			monocycle.position.x += dx;
 			monocycle.position.y = levelSpline.GetHeight (monocycle.position.x);
 			monocycle.wheelRotation -= (2.0f * M_PI) * (distanceTraveled / (2 * monocycle.wheelRadius * M_PI));
-			monocycle.offset = vec2 ( -pathTangent.y * monocycle.wheelRadius, pathTangent.x * monocycle.wheelRadius );
+			monocycle.offset = vec2 ( normal.x * monocycle.wheelRadius, normal.y * monocycle.wheelRadius );
 			
 			physicsTime -= physicsTimeStep;
 			
 		}
 		
+	}
+
+	void SetupDebugLines () {
+
+		glGenVertexArrays (1, &debugLinesVao);
+		glBindVertexArray (debugLinesVao);
+
+		glGenBuffers (1, &debugLinesVbo);
+		glBindBuffer (GL_ARRAY_BUFFER, debugLinesVbo);
+
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(
+			0, // attrib location
+			2, // attrib element count, vec2 has 2 elements
+			GL_FLOAT, // attrib element type, elements are of type float
+			GL_FALSE, // please don't normalize OpenGL, thank you very much
+			0, // no stride in the data, only using positions, tightly packed together
+			0 // first element of the buffer is data already
+		);
+
+		glBindVertexArray (0);
+		glBindBuffer (GL_ARRAY_BUFFER, 0);
+
+	}
+
+	void UploadDebugLines () {
+
+		glBindBuffer (GL_ARRAY_BUFFER, debugLinesVbo);
+		glBufferData (GL_ARRAY_BUFFER, sizeof (float) * debugLinesVertices.size () * 2, &debugLinesVertices [0], GL_DYNAMIC_DRAW);
+		glBindBuffer (GL_ARRAY_BUFFER, 0);
+
 	}
 	
 	void Draw () {
@@ -911,13 +964,22 @@ struct MonocycleGame {
 		camera.SetShaderUniforms (gpuProgram, "u_view", "u_projection");
 		levelSpline.Draw ();
 		monocycle.Draw (gpuProgram);
+
+		model.SetUniform (gpuProgram.getId (), "u_model");
+		UploadDebugLines ();
+		glBindVertexArray (debugLinesVao);
+		int colorUniformLocation = glGetUniformLocation(gpuProgram.getId(), "u_color");
+		glUniform3f (colorUniformLocation, 1.0f, 0.0f, 0.0f);
+		glDrawArrays (GL_LINES, 0, debugLinesVertices.size ());
+		glBindVertexArray (0);
+
+		debugLinesVertices.clear ();
 		
 	}
 	
 };
 
 MonocycleGame game;
-mat4 model;
 long lastFrameTimestamp;
 
 const char * const vertexSource = R"(

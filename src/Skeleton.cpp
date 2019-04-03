@@ -141,7 +141,67 @@ class Camera {
 	
 };
 
+
+
+const char * const vertexSource = R"(
+	#version 330
+	precision highp float;
+
+	uniform mat4 u_view;
+	uniform mat4 u_projection;
+	uniform mat4 u_model;
+	layout(location = 0) in vec2 in_vertexPosition;
+
+	void main() {
+		gl_Position = vec4 ((u_projection * u_view * u_model * vec4 (in_vertexPosition.x, in_vertexPosition.y, 0.0, 1.0)).xyz, 1.0);
+	}
+)";
+
+const char * const fragmentSource = R"(
+	#version 330
+	precision highp float;
+	
+	uniform vec3 u_color;
+	out vec4 out_finalColor;
+
+	void main() {
+		out_finalColor = vec4(u_color, 1.0);
+	}
+)";
+
+const char* const backgroundVertexSource = R"(
+	#version 330
+
+	precision highp float;
+
+	layout(location = 0) in vec2 in_vertexPosition;
+	layout(location = 1) in vec2 in_vertexTexCoord;
+
+	out vec2 v_vertexTexCoord;
+
+	void main () {
+		v_vertexTexCoord = in_vertexTexCoord;
+		gl_Position = vec4 (in_vertexPosition.x, in_vertexPosition.y, 0.0, 1.0);
+	}
+)";
+
+const char* const backgroundFragmentSource = R"(
+	#version 330
+
+	in vec2 v_vertexTexCoord;
+
+	uniform sampler2D u_texture;
+
+	out vec4 out_finalColor;
+
+	void main () {
+		out_finalColor = texture2D(u_texture, v_vertexTexCoord);
+	}
+)";
+
 GPUProgram gpuProgram;
+GPUProgram backgroundGpuProgram;
+mat4 model;
 
 struct Spline {
 	
@@ -435,7 +495,7 @@ struct Spline {
 		
 	}
 	
-	void AddControlPoint (vec2 cp) {
+	void AddControlPoint (vec2 cp, bool doRecalculate = true) {
 		
 		bool inserted = false;
 		for (auto it = controlPoints.begin (); it != controlPoints.end (); it++) {
@@ -453,8 +513,12 @@ struct Spline {
 			controlPoints.push_back (cp);
 		}
 		
-		this->RecalculateVertices ();
-		this->UploadVertices ();
+		if (doRecalculate) {
+
+			this->RecalculateVertices ();
+			this->UploadVertices ();
+
+		}
 		
 	}
 	
@@ -539,6 +603,8 @@ struct Monocycle {
 	float headDistanceFromWheel = wheelRadius * 3.0f;
 	float bodyDistanceFromWheel = wheelRadius * 1.5f;
 	float pedalCircleRadius = wheelRadius * 0.6f;
+
+	bool goingRight = true;
 
 	void CreateWheel () {
 
@@ -709,6 +775,10 @@ struct Monocycle {
 		mat4 rotation;
 		IdentityMatrix (rotation);
 		rotation = rotation * RotationMatrix (wheelRotation, vec3 (0.0f, 0.0f, 1.0f));
+
+		if (!goingRight) {
+			rotation = rotation * RotationMatrix ((float) M_PI, vec3 (0.0f, 1.0f, 0.0f));
+		}
 		
 		IdentityMatrix (this->model);
 		this->model = this->model * rotation;
@@ -726,6 +796,14 @@ struct Monocycle {
 
 		// Other parts don't require rotation
 		IdentityMatrix (this->model);
+
+		if (!goingRight) {
+			mat4 rotation;
+			IdentityMatrix (rotation);
+			rotation = rotation * RotationMatrix ((float) M_PI, vec3 (0.0f, 1.0f, 0.0f));
+			this->model = this->model * rotation;
+		}
+
 		this->model = this->model * TranslateMatrix (vec3 (position.x + offset.x, position.y + offset.y, 0.0f));
 
 		SetUniformMatrix (program, "u_model", this->model);
@@ -799,8 +877,6 @@ struct Monocycle {
 
 };
 
-mat4 model;
-
 struct MonocycleGame {
 	
 	Spline backgroundSpline;
@@ -821,7 +897,10 @@ struct MonocycleGame {
 
 	unsigned int debugLinesVao;
 	unsigned int debugLinesVbo;
-	std::vector <vec2> debugLinesVertices;
+
+	Texture* backgroundSplineTexture;
+	unsigned int backgroundVao;
+	unsigned int backgroundVbo;
 
 	void SetupBackgroundSpline () {
 
@@ -829,19 +908,83 @@ struct MonocycleGame {
 		
 		backgroundSpline.color = vec3 (0.4f, 0.4f, 0.4f);
 		
-		backgroundSpline.AddControlPoint (vec2 (EPSILON, windowHeight * 0.9f));
-		backgroundSpline.AddControlPoint (vec2 (windowWidth * 0.2f, windowHeight * 0.6f));
-		backgroundSpline.AddControlPoint (vec2 (windowWidth * 0.4f, windowHeight * 0.3f));
-		backgroundSpline.AddControlPoint (vec2 (windowWidth * 0.6f, windowHeight * 0.5f));
-		backgroundSpline.AddControlPoint (vec2 (windowWidth * 0.8f, windowHeight * 0.3f));
-		backgroundSpline.AddControlPoint (vec2 (windowWidth * 1.0f, windowHeight * 0.7f));
+		backgroundSpline.AddControlPoint (vec2 (EPSILON, windowHeight * 0.9f), false);
+		backgroundSpline.AddControlPoint (vec2 (windowWidth * 0.2f, windowHeight * 0.6f), false);
+		backgroundSpline.AddControlPoint (vec2 (windowWidth * 0.4f, windowHeight * 0.3f), false);
+		backgroundSpline.AddControlPoint (vec2 (windowWidth * 0.6f, windowHeight * 0.5f), false);
+		backgroundSpline.AddControlPoint (vec2 (windowWidth * 0.8f, windowHeight * 0.3f), false);
+		backgroundSpline.AddControlPoint (vec2 (windowWidth * 1.0f, windowHeight * 0.7f), false);
 		
 		backgroundSpline.tension = 0.5f;
 		backgroundSpline.continuity = 0.0f;
 		backgroundSpline.bias = 0.5f;
 		
 		backgroundSpline.RecalculateVertices ();
-		backgroundSpline.UploadVertices ();
+		
+		std::vector <vec4> backgroundSplinePixels;
+
+		for (int y = 0; y < windowHeight; y++) {
+			for (int x = 0; x < windowWidth; x++) {
+
+				vec2 v (x * 1.0f, y * 1.0f);
+				vec4 pixel;
+
+				float spline = backgroundSpline.GetHeight (x);
+
+				if (v.y > spline) {
+					pixel = vec4 (0.4f, 0.4f, 0.4f, 1.0f);
+				} else {
+					pixel = vec4 (0.05f, 0.1f, 0.8f, 1.0f);
+				}
+
+				backgroundSplinePixels.push_back (pixel);
+
+			}
+		}
+
+		backgroundSplineTexture = new Texture (windowWidth, windowHeight, backgroundSplinePixels);
+
+		glGenVertexArrays (1, &backgroundVao);
+		glBindVertexArray (backgroundVao);
+
+		glGenBuffers (1, &backgroundVbo);
+		glBindBuffer (GL_ARRAY_BUFFER, backgroundVbo);
+
+		float bgData [] = {
+			-1.0f, 1.0f, 0.0f, 0.0f,
+			1.0f, 1.0f, 1.0f, 0.0f,
+			-1.0f, -1.0f, 0.0f, 1.0f,
+
+			1.0f, 1.0f, 1.0f, 0.0f,
+			1.0f, -1.0f, 1.0f, 1.0f,
+			-1.0f, -1.0f, 0.0f, 1.0f
+		};
+		glBufferData (
+			GL_ARRAY_BUFFER,
+			sizeof (bgData),
+			bgData,
+			GL_STATIC_DRAW
+		);
+
+		glEnableVertexAttribArray (0);
+		glVertexAttribPointer (
+			0,
+			2,
+			GL_FLOAT,
+			GL_FALSE,
+			4 * sizeof (float),
+			0
+		);
+
+		glEnableVertexAttribArray (1);
+		glVertexAttribPointer (
+			1,
+			2,
+			GL_FLOAT,
+			GL_FALSE,
+			4 * sizeof (float),
+			(void*) (2 * sizeof (float))
+		);
 		
 	}
 
@@ -876,8 +1019,6 @@ struct MonocycleGame {
 		monocycle.position.x += EPSILON;
 
 		cameraFollowsMonocycle = false;
-
-		SetupDebugLines ();
 		
 	}
 	
@@ -902,9 +1043,6 @@ struct MonocycleGame {
 			float sinAlpha = sinf (atanf (pathTangent));
 			float cosAlpha = cosf (atanf (pathTangent));
 
-			debugLinesVertices.push_back (vec2 (monocycle.position.x - 20.0f * cosAlpha, monocycle.position.y - 20.0f * sinAlpha));
-			debugLinesVertices.push_back (vec2 (monocycle.position.x + 20.0f * cosAlpha, monocycle.position.y + 20.0f * sinAlpha));
-
 			vec2 normal;
 			normal.x = -sinf (atanf (pathTangent));
 			normal.y = cosf (atanf (pathTangent));
@@ -913,6 +1051,19 @@ struct MonocycleGame {
 			float distanceTraveled = velocity * physicsTimeStep;
 
 			float dx = distanceTraveled / dr;
+			if (!monocycle.goingRight) {
+				dx *= -1.0f;
+			}
+
+			if (monocycle.position.x < EPSILON) {
+				monocycle.position.x = EPSILON;
+				monocycle.goingRight = true;
+			}
+
+			if (monocycle.position.x >= levelSpline.controlPoints [levelSpline.controlPoints.size () - 1].x - EPSILON) {
+				monocycle.position.x = levelSpline.controlPoints [levelSpline.controlPoints.size () - 1].x - EPSILON;
+				monocycle.goingRight = false;
+			}
 
 			monocycle.position.x += dx;
 			monocycle.position.y = levelSpline.GetHeight (monocycle.position.x);
@@ -925,55 +1076,20 @@ struct MonocycleGame {
 		
 	}
 
-	void SetupDebugLines () {
-
-		glGenVertexArrays (1, &debugLinesVao);
-		glBindVertexArray (debugLinesVao);
-
-		glGenBuffers (1, &debugLinesVbo);
-		glBindBuffer (GL_ARRAY_BUFFER, debugLinesVbo);
-
-		glEnableVertexAttribArray(0);
-		glVertexAttribPointer(
-			0, // attrib location
-			2, // attrib element count, vec2 has 2 elements
-			GL_FLOAT, // attrib element type, elements are of type float
-			GL_FALSE, // please don't normalize OpenGL, thank you very much
-			0, // no stride in the data, only using positions, tightly packed together
-			0 // first element of the buffer is data already
-		);
-
-		glBindVertexArray (0);
-		glBindBuffer (GL_ARRAY_BUFFER, 0);
-
-	}
-
-	void UploadDebugLines () {
-
-		glBindBuffer (GL_ARRAY_BUFFER, debugLinesVbo);
-		glBufferData (GL_ARRAY_BUFFER, sizeof (float) * debugLinesVertices.size () * 2, &debugLinesVertices [0], GL_DYNAMIC_DRAW);
-		glBindBuffer (GL_ARRAY_BUFFER, 0);
-
-	}
-	
 	void Draw () {
 		
-		stationaryCamera.SetShaderUniforms (gpuProgram, "u_view", "u_projection");
-		backgroundSpline.Draw ();
-		
+		backgroundGpuProgram.Use ();
+		backgroundSplineTexture->SetUniform (backgroundGpuProgram.getId (), "u_texture");
+
+		glBindVertexArray (backgroundVao);
+		glDrawArrays (GL_TRIANGLES, 0, 6);
+		glBindVertexArray (0);
+
+		gpuProgram.Use ();
+
 		camera.SetShaderUniforms (gpuProgram, "u_view", "u_projection");
 		levelSpline.Draw ();
 		monocycle.Draw (gpuProgram);
-
-		model.SetUniform (gpuProgram.getId (), "u_model");
-		UploadDebugLines ();
-		glBindVertexArray (debugLinesVao);
-		int colorUniformLocation = glGetUniformLocation(gpuProgram.getId(), "u_color");
-		glUniform3f (colorUniformLocation, 1.0f, 0.0f, 0.0f);
-		glDrawArrays (GL_LINES, 0, debugLinesVertices.size ());
-		glBindVertexArray (0);
-
-		debugLinesVertices.clear ();
 		
 	}
 	
@@ -982,32 +1098,6 @@ struct MonocycleGame {
 MonocycleGame game;
 long lastFrameTimestamp;
 
-const char * const vertexSource = R"(
-	#version 330
-	precision highp float;
-
-	uniform mat4 u_view;
-	uniform mat4 u_projection;
-	uniform mat4 u_model;
-	layout(location = 0) in vec2 in_vertexPosition;
-
-	void main() {
-		gl_Position = vec4 ((u_projection * u_view * u_model * vec4 (in_vertexPosition.x, in_vertexPosition.y, 0.0, 1.0)).xyz, 1.0);
-	}
-)";
-
-const char * const fragmentSource = R"(
-	#version 330
-	precision highp float;
-	
-	uniform vec3 u_color;
-	out vec4 out_finalColor;
-
-	void main() {
-		out_finalColor = vec4(u_color, 1.0);
-	}
-)";
-
 void onInitialization() {
 	
 	game.Setup ();
@@ -1015,6 +1105,7 @@ void onInitialization() {
 	glViewport(0, 0, windowWidth, windowHeight);
 
 	gpuProgram.Create(vertexSource, fragmentSource, "out_finalColor");
+	backgroundGpuProgram.Create (backgroundVertexSource, backgroundFragmentSource, "out_finalColor");
 	
 	IdentityMatrix (model);
 	
@@ -1022,7 +1113,7 @@ void onInitialization() {
 
 void onDisplay() {
 	
-	glClearColor(0, 0.08f, 0.82f, 1.0f);
+	glClearColor(0, 0.0f, 0.0f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 
 	model.SetUniform (gpuProgram.getId (), "u_model");

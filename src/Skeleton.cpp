@@ -203,6 +203,14 @@ GPUProgram gpuProgram;
 GPUProgram backgroundGpuProgram;
 mat4 model;
 
+struct FindControlPointsResult {
+	vec2 p0;
+	vec2 p1;
+	vec2 p2;
+	vec2 p3;
+	bool found;
+};
+
 struct Spline {
 	
 	// Source: https://en.wikipedia.org/wiki/Kochanek%E2%80%93Bartels_spline
@@ -240,14 +248,12 @@ struct Spline {
 		
 	}
 
-	float GetTangent (float x) {
+	FindControlPointsResult FindControlPoints (float x) {
 
-		if (controlPoints.size () == 0) return 0.0f;
-		
-		vec2 p0 (controlPoints [0].x, controlPoints [0].y);
-		vec2 p1 (controlPoints [0].x, controlPoints [0].y);
-		vec2 p2 (controlPoints [0].x, controlPoints [0].y);
-		vec2 p3 (controlPoints [0].x, controlPoints [0].y);
+		vec2 p0 = controlPoints [0];
+		vec2 p1 = controlPoints [0];
+		vec2 p2 = controlPoints [0];
+		vec2 p3 = controlPoints [0];
 		bool foundControlPoints = false;
 		
 		for (int i = 0; i < controlPoints.size (); i++) {
@@ -257,61 +263,38 @@ struct Spline {
 			
 			if (i == 0) {
 				
-				p0.x = controlPoints [0].x;
-				p0.y = controlPoints [0].y;
+				p0 = controlPoints [0];
+				p1 = controlPoints [0];
+				p2 = controlPoints [0];
 				
-				p1.x = controlPoints [0].x;
-				p1.y = controlPoints [0].y;
-				
-				p2.x = controlPoints [0].x;
-				p2.y = controlPoints [0].y;
-				
-				p3.x = controlPoints [min (1, controlPoints.size ())].x;
-				p3.y = controlPoints [min (1, controlPoints.size ())].y;
+				p3 = controlPoints [min (1, controlPoints.size () - 1)];
 				
 				foundControlPoints = true;
 				break;
 				
 			} else if (i == 1) {
 				
-				p0.x = controlPoints [0].x;
-				p0.y = controlPoints [0].y;
-				
-				p1.x = controlPoints [0].x;
-				p1.y = controlPoints [0].y;
-				
-				p2.x = controlPoints [min (1, controlPoints.size ())].x;
-				p2.y = controlPoints [min (1, controlPoints.size ())].y;
-				
-				p3.x = controlPoints [min (2, controlPoints.size ())].x;
-				p3.y = controlPoints [min (2, controlPoints.size ())].y;
-				
+				p0 = controlPoints [0];
+				p1 = controlPoints [0];
+				p2 = controlPoints [min (1, controlPoints.size ())];
+				p3 = controlPoints [min (2, controlPoints.size ())];
+
 				foundControlPoints = true;
 				break;
 				
 			} else {
 				
-				p0.x = controlPoints [i - 2].x;
-				p0.y = controlPoints [i - 2].y;
-				
-				p1.x = controlPoints [i - 1].x;
-				p1.y = controlPoints [i - 1].y;
+				p0 = controlPoints [i - 2];
+				p1 = controlPoints [i - 1];
+				p2 = controlPoints [i];
 				
 				if (i == controlPoints.size () - 1) {
 					
-					p2.x = controlPoints [i].x;
-					p2.y = controlPoints [i].y;
-					
-					p3.x = controlPoints [i].x;
-					p3.y = controlPoints [i].y;
+					p3 = controlPoints [i];
 					
 				} else {
 					
-					p2.x = controlPoints [i].x;
-					p2.y = controlPoints [i].y;
-					
-					p3.x = controlPoints [i + 1].x;
-					p3.y = controlPoints [i + 1].y;
+					p3 = controlPoints [i + 1];
 					
 				}
 				
@@ -321,41 +304,47 @@ struct Spline {
 			}
 			
 		}
+
+		return { p0, p1, p2, p3, foundControlPoints };
+
+	}
+
+	float GetTangent (float x) {
+
+		if (controlPoints.size () == 0) return 0.0f;
+
+		FindControlPointsResult findResult = FindControlPoints (x);
 		
-		if (!foundControlPoints) {
-			return controlPoints [controlPoints.size () - 1].y;
+		if (!findResult.found) {
+			return 0.0f;
 		}
+
+		vec2 p0 = findResult.p0;
+		vec2 p1 = findResult.p1;
+		vec2 p2 = findResult.p2;
+		vec2 p3 = findResult.p3;
 		
 		// Calculate Kochanek-Bartels tangents
-		vec2 d0;
+		vec2 m0 = ( p1 - p0 ) * ( ( (1.0f - tension) * (1.0f + bias) * (1.0f + continuity) ) / 2.0f )
+			+ (p2 - p1) * ( ( (1.0f - tension) * (1.0f - bias) * (1.0f - continuity) ) / 2.0f );
 
-		d0.x = ( (1.0f - tension) * (1.0f + bias) * (1.0f + continuity) ) / 2.0f * unzero ( p1.x - p0.x )
-			+ ( (1.0f - tension) * (1.0f - bias) * (1.0f - continuity) ) / 2.0f * unzero (p2.x - p1.x);
+		vec2 m1 = ( p2 - p1 ) * ( ( (1.0f - tension) * (1.0f + bias) * (1.0f - continuity) ) / 2.0f )
+			+ ( p3 - p2 ) * ( ( (1.0f - tension) * (1.0f - bias) * (1.0f + continuity) ) / 2.0f );
 
-		d0.y = ( (1.0f - tension) * (1.0f + bias) * (1.0f + continuity) ) / 2.0f * unzero ( p1.y - p0.y )
-			+ ( (1.0f - tension) * (1.0f - bias) * (1.0f - continuity) ) / 2.0f * unzero (p2.y - p1.y);
-
-		vec2 d1;
-
-		d1.x = ( (1.0f - tension) * (1.0f + bias) * (1.0f - continuity) ) / 2.0f * unzero ( p2.x - p1.x )
-			+ ( (1.0f - tension) * (1.0f - bias) * (1.0f + continuity) ) / 2.0f * unzero ( p3.x - p2.x );
-		d1.y = ( (1.0f - tension) * (1.0f + bias) * (1.0f - continuity) ) / 2.0f * unzero ( p2.y - p1.y )
-			+ ( (1.0f - tension) * (1.0f - bias) * (1.0f + continuity) ) / 2.0f * unzero ( p3.y - p2.y );
-			
 		// Alpha is the interpolation value between p1 and p2
 		float t = (x - p1.x) / unzero (abs (p2.x - p1.x));
 
 		vec2 tangentVector;
 
 		tangentVector.x = (6.0f * t * t - 6.0f * t) * p1.x
-			+ (3.0f * t * t - 4.0 * t + 1.0f) * d0.x
+			+ (3.0f * t * t - 4.0 * t + 1.0f) * m0.x
 			+ (-6.0f * t * t + 6.0f * t) * p2.x
-			+ (3.0f * t * t - 2.0f * t) * d1.x;
+			+ (3.0f * t * t - 2.0f * t) * m1.x;
 
 		tangentVector.y = (6.0f * t * t - 6.0f * t) * p1.y
-			+ (3.0f * t * t - 4.0 * t + 1.0f) * d0.y
+			+ (3.0f * t * t - 4.0 * t + 1.0f) * m0.y
 			+ (-6.0f * t * t + 6.0f * t) * p2.y
-			+ (3.0f * t * t - 2.0f * t) * d1.y;
+			+ (3.0f * t * t - 2.0f * t) * m1.y;
 
 		return tangentVector.y / unzero (tangentVector.x);
 
@@ -365,93 +354,28 @@ struct Spline {
 		
 		if (controlPoints.size () == 0) return 0.0f;
 		
-		vec2 p0 (controlPoints [0].x, controlPoints [0].y);
-		vec2 p1 (controlPoints [0].x, controlPoints [0].y);
-		vec2 p2 (controlPoints [0].x, controlPoints [0].y);
-		vec2 p3 (controlPoints [0].x, controlPoints [0].y);
-		bool foundControlPoints = false;
 		
-		for (int i = 0; i < controlPoints.size (); i++) {
-			
-			vec2 cp (controlPoints [i].x, controlPoints [i].y);
-			if (cp.x < x) continue;
-			
-			if (i == 0) {
-				
-				p0.x = controlPoints [0].x;
-				p0.y = controlPoints [0].y;
-				
-				p1.x = controlPoints [0].x;
-				p1.y = controlPoints [0].y;
-				
-				p2.x = controlPoints [0].x;
-				p2.y = controlPoints [0].y;
-				
-				p3.x = controlPoints [min (1, controlPoints.size ())].x;
-				p3.y = controlPoints [min (1, controlPoints.size ())].y;
-				
-				foundControlPoints = true;
-				break;
-				
-			} else if (i == 1) {
-				
-				p0.x = controlPoints [0].x;
-				p0.y = controlPoints [0].y;
-				
-				p1.x = controlPoints [0].x;
-				p1.y = controlPoints [0].y;
-				
-				p2.x = controlPoints [min (1, controlPoints.size ())].x;
-				p2.y = controlPoints [min (1, controlPoints.size ())].y;
-				
-				p3.x = controlPoints [min (2, controlPoints.size ())].x;
-				p3.y = controlPoints [min (2, controlPoints.size ())].y;
-				
-				foundControlPoints = true;
-				break;
-				
-			} else {
-				
-				p0.x = controlPoints [i - 2].x;
-				p0.y = controlPoints [i - 2].y;
-				
-				p1.x = controlPoints [i - 1].x;
-				p1.y = controlPoints [i - 1].y;
-				
-				if (i == controlPoints.size () - 1) {
-					
-					p2.x = controlPoints [i].x;
-					p2.y = controlPoints [i].y;
-					
-					p3.x = controlPoints [i].x;
-					p3.y = controlPoints [i].y;
-					
-				} else {
-					
-					p2.x = controlPoints [i].x;
-					p2.y = controlPoints [i].y;
-					
-					p3.x = controlPoints [i + 1].x;
-					p3.y = controlPoints [i + 1].y;
-					
-				}
-				
-				foundControlPoints = true;
-				break;
-				
-			}
-			
-		}
+		FindControlPointsResult findResult = FindControlPoints (x);
 		
-		if (!foundControlPoints) {
-			return controlPoints [controlPoints.size () - 1].y;
+		if (!findResult.found) {
+			return 0.0f;
 		}
+
+		vec2 p0 = findResult.p0;
+		vec2 p1 = findResult.p1;
+		vec2 p2 = findResult.p2;
+		vec2 p3 = findResult.p3;
 		
 		// Calculate Kochanek-Bartels tangents
-		float d0 = ( (1.0f - tension) * (1.0f + bias) * (1.0f + continuity) ) / 2.0f * unzero ( p1.y - p0.y )
-			+ ( (1.0f - tension) * (1.0f - bias) * (1.0f - continuity) ) / 2.0f * unzero (p2.y - p1.y);
-		float d1 = ( (1.0f - tension) * (1.0f + bias) * (1.0f - continuity) ) / 2.0f * unzero ( p2.y - p1.y )
-			+ ( (1.0f - tension) * (1.0f - bias) * (1.0f + continuity) ) / 2.0f * unzero ( p3.y - p2.y );
+
+		vec2 m0 = ( p1 - p0 ) * ( ( (1.0f - tension) * (1.0f + bias) * (1.0f + continuity) ) / 2.0f )
+			+ (p2 - p1) * ( ( (1.0f - tension) * (1.0f - bias) * (1.0f - continuity) ) / 2.0f );
+
+		vec2 m1 = ( p2 - p1 ) * ( ( (1.0f - tension) * (1.0f + bias) * (1.0f - continuity) ) / 2.0f )
+			+ ( p3 - p2 ) * ( ( (1.0f - tension) * (1.0f - bias) * (1.0f + continuity) ) / 2.0f );
+
+		float d0 = m0.y / unzero (m0.x);
+		float d1 = m1.y / unzero (m1.x);
 			
 		// Alpha is the interpolation value between p1 and p2
 		float t = (x - p1.x) / unzero (abs (p2.x - p1.x));
@@ -528,7 +452,7 @@ struct Spline {
 		glUniform3f (colorUniformLocation, color.x, color.y, color.z);
 		
 		glBindVertexArray(vao);
-		glDrawArrays(GL_LINES, 0, vertices.size ());
+		glDrawArrays(GL_TRIANGLE_STRIP, 0, vertices.size ());
 		glBindVertexArray (0);
 		
 	}
@@ -598,8 +522,8 @@ struct Monocycle {
 	int numLegVertices = 0;
 
 	float mass = 1.0f;
-	float wheelRadius = 32.0f;
-	float headRadius = 24.0f;
+	float wheelRadius = 16.0f;
+	float headRadius = 8.0f;
 	float headDistanceFromWheel = wheelRadius * 3.0f;
 	float bodyDistanceFromWheel = wheelRadius * 1.5f;
 	float pedalCircleRadius = wheelRadius * 0.6f;
@@ -991,10 +915,10 @@ struct MonocycleGame {
 	void SetupLevelSpline () {
 
 		levelSpline.Setup ();
-		levelSpline.AddControlPoint (vec2 (EPSILON, windowHeight * 0.5f));
-		levelSpline.AddControlPoint (vec2 (windowWidth * 0.15f, windowHeight * 0.7f));
-		levelSpline.AddControlPoint (vec2 (windowWidth * 0.3f, windowHeight * 0.55f));
-		levelSpline.AddControlPoint (vec2 (windowWidth * 0.5f, windowHeight * 0.3f));
+		levelSpline.AddControlPoint (vec2 (0, windowHeight * 0.5f));
+		levelSpline.AddControlPoint (vec2 (windowWidth * 0.35f, windowHeight * 0.7f));
+		levelSpline.AddControlPoint (vec2 (windowWidth * 0.6f, windowHeight * 0.55f));
+		levelSpline.AddControlPoint (vec2 (windowWidth * 1.0f, windowHeight * 0.3f));
 		
 		levelSpline.tension = -0.5f;
 		levelSpline.bias = 0.5f;
@@ -1023,12 +947,6 @@ struct MonocycleGame {
 	}
 	
 	void Update (float delta) {
-		
-		if (cameraFollowsMonocycle) {
-			
-			camera.SetPosition ( monocycle.position.x, camera.GetY () );
-			
-		}
 		
 		physicsTime += delta;
 		
@@ -1071,6 +989,12 @@ struct MonocycleGame {
 			monocycle.offset = vec2 ( normal.x * monocycle.wheelRadius, normal.y * monocycle.wheelRadius );
 			
 			physicsTime -= physicsTimeStep;
+			
+		}
+		
+		if (cameraFollowsMonocycle) {
+			
+			camera.SetPosition ( monocycle.position.x, camera.GetY () );
 			
 		}
 		
@@ -1143,8 +1067,6 @@ void onMouseMotion(int pX, int pY) {
 	float cX = 2.0f * pX / windowWidth - 1;
 	float cY = 1.0f - 2.0f * pY / windowHeight;
 	
-	printf("Mouse moved to (%3.2f, %3.2f)\n", cX, cY);
-	
 }
 
 // Mouse click event
@@ -1153,22 +1075,14 @@ void onMouse(int button, int state, int pX, int pY) {
 	float cX = pX * 1.0f + (game.camera.GetX () - windowWidth / 2.0f);
 	float cY = windowHeight - pY * 1.0f;
 
-	char * buttonStat;
-	switch (state) {
-		case GLUT_DOWN: buttonStat = "pressed"; break;
-		case GLUT_UP:   buttonStat = "released"; break;
-	}
-
 	switch (button) {
 		case GLUT_LEFT_BUTTON:   
-			printf("Left button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);
 			if (state == GLUT_DOWN) {
 				game.levelSpline.AddControlPoint (vec2 (cX, cY));
 			}
 			break;
-		case GLUT_MIDDLE_BUTTON: printf("Middle button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY); break;
-		case GLUT_RIGHT_BUTTON:  printf("Right button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);  break;
 	}
+
 }
 
 void onIdle() {

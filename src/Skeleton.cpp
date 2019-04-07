@@ -1,7 +1,3 @@
-// TODO:
-//     * circle drawing for monocycle and cyclist
-//     * calculate math for position of legs
-
 //=============================================================================================
 // Mintaprogram: Zöld háromszög. Ervenyes 2018. osztol.
 //
@@ -45,13 +41,6 @@ inline int max (int a, int b) {
 	return a > b ? a : b;
 }
 
-inline vec2 cloneVec2 (vec2& v) {
-	vec2 clone;
-	clone.x = v.x;
-	clone.y = v.y;
-	return clone;
-}
-
 inline void IdentityMatrix (mat4 &matrix) {
 	
 	for (int i = 0; i < 4; i++) {
@@ -63,6 +52,7 @@ inline void IdentityMatrix (mat4 &matrix) {
 	
 }
 
+// Source: https://www.scratchapixel.com/lessons/3d-basic-rendering/perspective-and-orthographic-projection-matrix/orthographic-projection-matrix
 inline void OrthographicProjection (
 	float left, 
 	float right, 
@@ -140,8 +130,6 @@ class Camera {
 		}
 	
 };
-
-
 
 const char * const vertexSource = R"(
 	#version 330
@@ -235,12 +223,12 @@ struct Spline {
 		
 		glEnableVertexAttribArray(0);
 		glVertexAttribPointer(
-			0, // attrib location
-			2, // attrib element count, vec2 has 2 elements
-			GL_FLOAT, // attrib element type, elements are of type float
-			GL_FALSE, // please don't normalize OpenGL, thank you very much
-			0, // no stride in the data, only using positions, tightly packed together
-			0 // first element of the buffer is data already
+			0,
+			2,
+			GL_FLOAT,
+			GL_FALSE,
+			0,
+			0
 		);
 		
 		glBindVertexArray (0);
@@ -324,16 +312,16 @@ struct Spline {
 		vec2 p2 = findResult.p2;
 		vec2 p3 = findResult.p3;
 		
-		// Calculate Kochanek-Bartels tangents
+		// Source: https://en.wikipedia.org/wiki/Kochanek%E2%80%93Bartels_spline
 		vec2 m0 = ( p1 - p0 ) * ( ( (1.0f - tension) * (1.0f + bias) * (1.0f + continuity) ) / 2.0f )
 			+ (p2 - p1) * ( ( (1.0f - tension) * (1.0f - bias) * (1.0f - continuity) ) / 2.0f );
 
 		vec2 m1 = ( p2 - p1 ) * ( ( (1.0f - tension) * (1.0f + bias) * (1.0f - continuity) ) / 2.0f )
 			+ ( p3 - p2 ) * ( ( (1.0f - tension) * (1.0f - bias) * (1.0f + continuity) ) / 2.0f );
 
-		// Alpha is the interpolation value between p1 and p2
 		float t = (x - p1.x) / unzero (abs (p2.x - p1.x));
 
+		// Source: https://en.wikipedia.org/wiki/Cubic_Hermite_spline
 		vec2 tangentVector;
 
 		tangentVector.x = (6.0f * t * t - 6.0f * t) * p1.x
@@ -366,8 +354,7 @@ struct Spline {
 		vec2 p2 = findResult.p2;
 		vec2 p3 = findResult.p3;
 		
-		// Calculate Kochanek-Bartels tangents
-
+		// Source: https://en.wikipedia.org/wiki/Kochanek%E2%80%93Bartels_spline
 		vec2 m0 = ( p1 - p0 ) * ( ( (1.0f - tension) * (1.0f + bias) * (1.0f + continuity) ) / 2.0f )
 			+ (p2 - p1) * ( ( (1.0f - tension) * (1.0f - bias) * (1.0f - continuity) ) / 2.0f );
 
@@ -377,10 +364,9 @@ struct Spline {
 		float d0 = m0.y / unzero (m0.x);
 		float d1 = m1.y / unzero (m1.x);
 			
-		// Alpha is the interpolation value between p1 and p2
 		float t = (x - p1.x) / unzero (abs (p2.x - p1.x));
 		
-		// Calculate the spline interpolation value
+		// Source: https://en.wikipedia.org/wiki/Cubic_Hermite_spline
 		return (2.0f * t * t * t - 3.0f * t * t + 1.0f) * p1.y
 			+ (t * t * t - 2.0 * t * t + t) * d0 
 			+ (-2.0f * t * t * t + 3.0f * t * t) * p2.y
@@ -467,6 +453,7 @@ struct IntersectCirclesResult {
 
 };
 
+// Source: http://paulbourke.net/geometry/circlesphere/
 IntersectCirclesResult intersectCircles (
 	vec2 center1, float radius1,
 	vec2 center2, float radius2
@@ -522,8 +509,8 @@ struct Monocycle {
 	int numLegVertices = 0;
 
 	float mass = 1.0f;
-	float wheelRadius = 16.0f;
-	float headRadius = 8.0f;
+	float wheelRadius = 24.0f;
+	float headRadius = 12.0f;
 	float headDistanceFromWheel = wheelRadius * 3.0f;
 	float bodyDistanceFromWheel = wheelRadius * 1.5f;
 	float pedalCircleRadius = wheelRadius * 0.6f;
@@ -584,12 +571,12 @@ struct Monocycle {
 
 		glEnableVertexAttribArray(0);
 		glVertexAttribPointer(
-			0, // attrib location
-			2, // attrib element count, vec2 has 2 elements
-			GL_FLOAT, // attrib element type, elements are of type float
-			GL_FALSE, // please don't normalize OpenGL, thank you very much
-			0, // no stride in the data, only using positions, tightly packed together
-			0 // first element of the buffer is data already
+			0,
+			2,
+			GL_FLOAT,
+			GL_FALSE,
+			0,
+			0
 		);
 
 		glBindVertexArray (0);
@@ -645,12 +632,12 @@ struct Monocycle {
 
 		glEnableVertexAttribArray(0);
 		glVertexAttribPointer(
-			0, // attrib location
-			2, // attrib element count, vec2 has 2 elements
-			GL_FLOAT, // attrib element type, elements are of type float
-			GL_FALSE, // please don't normalize OpenGL, thank you very much
-			0, // no stride in the data, only using positions, tightly packed together
-			0 // first element of the buffer is data already
+			0,
+			2,
+			GL_FLOAT,
+			GL_FALSE,
+			0,
+			0
 		);
 
 		glBindVertexArray (0);
@@ -668,12 +655,12 @@ struct Monocycle {
 
 		glEnableVertexAttribArray(0);
 		glVertexAttribPointer(
-			0, // attrib location
-			2, // attrib element count, vec2 has 2 elements
-			GL_FLOAT, // attrib element type, elements are of type float
-			GL_FALSE, // please don't normalize OpenGL, thank you very much
-			0, // no stride in the data, only using positions, tightly packed together
-			0 // first element of the buffer is data already
+			0,
+			2,
+			GL_FLOAT,
+			GL_FALSE,
+			0,
+			0
 		);
 
 		glBindVertexArray (0);
@@ -683,13 +670,8 @@ struct Monocycle {
 
 	void Setup () {
 
-		// Create the wheel
 		CreateWheel ();
-
-		// Create head and body
 		CreateHeadAndBody ();
-
-		// Set-up legs
 		SetupLegs ();
 
 	}
@@ -718,7 +700,6 @@ struct Monocycle {
 
 	void DrawHeadAndBody (GPUProgram& program) {
 
-		// Other parts don't require rotation
 		IdentityMatrix (this->model);
 
 		if (!goingRight) {
@@ -744,7 +725,6 @@ struct Monocycle {
 
 		float legLength = abs (bodyDistanceFromWheel + pedalCircleRadius) / 2.0f;
 
-		// Leg #1
 		float leg1Angle = wheelRotation;
 		vec2 leg1CirclePosition (cosf (leg1Angle) * pedalCircleRadius, sinf (leg1Angle) * pedalCircleRadius);
 		vec2 leg1ToBody (leg1CirclePosition.x, leg1CirclePosition.y - bodyDistanceFromWheel);
@@ -761,7 +741,6 @@ struct Monocycle {
 		legVertices.push_back (vec2 (icr.r2.x, icr.r2.y));
 
 
-		// Leg #2
 		float leg2Angle = wheelRotation + (float) M_PI;
 		vec2 leg2CirclePosition (cosf (leg2Angle) * pedalCircleRadius, sinf (leg2Angle) * pedalCircleRadius);
 		vec2 leg2ToBody (leg2CirclePosition.x, leg2CirclePosition.y - bodyDistanceFromWheel);
@@ -778,6 +757,7 @@ struct Monocycle {
 		legVertices.push_back (vec2 (icr.r2.x, icr.r2.y));
 
 		numLegVertices = legVertices.size ();
+
 		glBindBuffer (GL_ARRAY_BUFFER, legsVbo);
 		glBufferData (GL_ARRAY_BUFFER, sizeof (float) * legVertices.size () * 2, &legVertices [0], GL_DYNAMIC_DRAW);
 		glBindBuffer (GL_ARRAY_BUFFER, 0);
@@ -856,9 +836,15 @@ struct MonocycleGame {
 				float spline = backgroundSpline.GetHeight (x);
 
 				if (v.y > spline) {
-					pixel = vec4 (0.4f, 0.4f, 0.4f, 1.0f);
+					if (v.y < 200.0) {
+						pixel = vec4 (1.0, 1.0, 1.0, 1.0);
+					} else if (v.y < 350.0) {
+						pixel = vec4 (0.6, 0.6, 0.6, 1.0);
+					} else {
+						pixel = vec4 (0.4f, 0.4f, 0.4f, 1.0f);
+					}
 				} else {
-					pixel = vec4 (0.05f, 0.1f, 0.8f, 1.0f);
+					pixel = vec4 (0.24f, 0.5f, 0.95f, 1.0f);
 				}
 
 				backgroundSplinePixels.push_back (pixel);
@@ -923,6 +909,7 @@ struct MonocycleGame {
 		levelSpline.tension = -0.5f;
 		levelSpline.bias = 0.5f;
 		levelSpline.continuity = 0.0f;
+		levelSpline.color = vec3 (0.15, 0.24, 0.17);
 		
 		levelSpline.RecalculateVertices ();
 		levelSpline.UploadVertices ();
@@ -952,18 +939,33 @@ struct MonocycleGame {
 		
 		while (physicsTime >= physicsTimeStep) {
 			
+			if (monocycle.position.x <= levelSpline.controlPoints [0].x + 2.0) {
+				monocycle.position.x = levelSpline.controlPoints [0].x + 2.0;
+				monocycle.position.y = levelSpline.GetHeight (monocycle.position.x);
+				monocycle.goingRight = true;
+			}
+
+			if (monocycle.position.x >= levelSpline.controlPoints [levelSpline.controlPoints.size () - 1].x - 1.0) {
+				monocycle.position.x = levelSpline.controlPoints [levelSpline.controlPoints.size () - 1].x - 1.0;
+				monocycle.position.y = levelSpline.GetHeight (monocycle.position.x);
+				monocycle.goingRight = false;
+			}
+
+			vec2 beforePosition (monocycle.position.x, monocycle.position.y);
+
 			float pathTangent = levelSpline.GetTangent (monocycle.position.x);
-			if (pathTangent < -500.0f) pathTangent = -500.0f;
-			if (pathTangent > 500.0f) pathTangent = 500.0f;
+			if (pathTangent < -1000.0f) pathTangent = -1000.0f;
+			if (pathTangent > 1000.0f) pathTangent = 1000.0f;
 
 			float dr = abs (sqrtf (1.0f + pathTangent * pathTangent));
 
-			float sinAlpha = sinf (atanf (pathTangent));
-			float cosAlpha = cosf (atanf (pathTangent));
+			float angle = atanf (pathTangent);
+			if (!monocycle.goingRight) {
+				angle *= -1.0f;
+			}
 
-			vec2 normal;
-			normal.x = -sinf (atanf (pathTangent));
-			normal.y = cosf (atanf (pathTangent));
+			float sinAlpha = sinf (angle);
+			float cosAlpha = cosf (angle);
 
 			float velocity = ( monocycleForce - (monocycle.mass * gravity * sinAlpha) ) / drag;
 			float distanceTraveled = velocity * physicsTimeStep;
@@ -972,22 +974,24 @@ struct MonocycleGame {
 			if (!monocycle.goingRight) {
 				dx *= -1.0f;
 			}
-
-			if (monocycle.position.x < EPSILON) {
-				monocycle.position.x = EPSILON;
-				monocycle.goingRight = true;
-			}
-
-			if (monocycle.position.x >= levelSpline.controlPoints [levelSpline.controlPoints.size () - 1].x - EPSILON) {
-				monocycle.position.x = levelSpline.controlPoints [levelSpline.controlPoints.size () - 1].x - EPSILON;
-				monocycle.goingRight = false;
-			}
-
 			monocycle.position.x += dx;
 			monocycle.position.y = levelSpline.GetHeight (monocycle.position.x);
-			monocycle.wheelRotation -= (2.0f * M_PI) * (distanceTraveled / (2 * monocycle.wheelRadius * M_PI));
+
+			pathTangent = levelSpline.GetTangent (monocycle.position.x);
+
+			vec2 normal;
+			normal.x = -sinf (atanf (pathTangent));
+			normal.y = cosf (atanf (pathTangent));
+
+			float actualTotalMovement = length (monocycle.position - beforePosition);
+			float angleChange = (2.0f * M_PI) * (actualTotalMovement / (2 * monocycle.wheelRadius * M_PI));
+			printf ("actualTotalMovement: %3.2f, angleChange: %3.2f, angle: %3.2f\n", actualTotalMovement, angleChange, monocycle.wheelRotation);
+
+			monocycle.wheelRotation -= angleChange;
+
 			monocycle.offset = vec2 ( normal.x * monocycle.wheelRadius, normal.y * monocycle.wheelRadius );
 			
+
 			physicsTime -= physicsTimeStep;
 			
 		}
@@ -1069,7 +1073,6 @@ void onMouseMotion(int pX, int pY) {
 	
 }
 
-// Mouse click event
 void onMouse(int button, int state, int pX, int pY) {
 	
 	float cX = pX * 1.0f + (game.camera.GetX () - windowWidth / 2.0f);
